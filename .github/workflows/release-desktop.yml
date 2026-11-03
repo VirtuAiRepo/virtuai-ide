@@ -1,0 +1,140 @@
+# Builds VirtuAI IDE (Electrobun) for macOS arm64, signs and notarizes, publishes
+# a GitHub Release asset. Trigger:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#   Actions → Release desktop → Run workflow (version 0.1.0)
+#
+# Before the first signed release, copy these Actions secrets from
+# VirtuAiRepo/virtuaiDesktop (same names):
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+#   APPLE_API_KEY_P8, APPLE_API_KEY, APPLE_API_ISSUER
+name: Release desktop
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (tags this commit as v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+
+concurrency:
+  group: release-desktop-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Stamp version and channel
+        run: |
+          version="${TAG#v}"
+          cat > packages/shared/src/version.ts <<EOF
+          export const version = "${version}";
+          export const channel = "stable";
+          export const commit = "${{ github.sha }}";
+          export const posthogProjectKey = "";
+          EOF
+
+      - name: Tag on workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$TAG"
+          git push -f origin "refs/tags/$TAG"
+
+      - name: Signing identity
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE is not set — copy signing secrets from virtuaiDesktop." >&2
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')"
+          if [ -z "$identity" ]; then
+            echo "No Developer ID Application identity in APPLE_CERTIFICATE" >&2
+            security find-identity -v "$keychain" >&2
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Notarization key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Install and package stable
+        run: |
+          bun install --frozen-lockfile
+          bun run desktop:package:stable
+
+      - name: Sign, DMG, notarize, staple
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          app="apps/desktop/build/stable-macos-arm64/VirtuAI.app"
+          if [ ! -d "$app" ]; then
+            # Electrobun may nest differently by version; find the stable VirtuAI.app
+            app="$(find apps/desktop/build -path '*stable*' -name 'VirtuAI.app' -type d | head -1)"
+          fi
+          if [ -z "${app:-}" ] || [ ! -d "$app" ]; then
+            echo "VirtuAI.app not found under apps/desktop/build" >&2
+            find apps/desktop/build -maxdepth 3 -type d -print >&2
+            exit 1
+          fi
+          codesign --force --deep --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --deep --strict "$app"
+          dmg="$RUNNER_TEMP/VirtuAI-${version}-macos-arm64.dmg"
+          hdiutil create -volname "VirtuAI" -srcfolder "$app" -ov -format UDZO "$dmg"
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg"
+          cp "$dmg" "VirtuAI-${version}-macos-arm64.dmg"
+          echo "DMG=VirtuAI-${version}-macos-arm64.dmg" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: VirtuAI IDE ${{ env.TAG }}
+          files: ${{ env.DMG }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

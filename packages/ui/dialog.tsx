@@ -1,0 +1,136 @@
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { RiCloseLine as X } from "@remixicon/react";
+import { useT } from "@thinkrail/locales/react";
+import type * as React from "react";
+import { useSyncExternalStore } from "react";
+import { IconButton } from "./button";
+import { cn } from "./utils";
+
+const OPEN_MODAL_LAYER = '[data-modal-layer][data-state="open"]';
+
+function subscribeModalLayers(onChange: () => void): () => void {
+	const observer = new MutationObserver(onChange);
+	observer.observe(document.body, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: ["data-state"],
+	});
+	return () => observer.disconnect();
+}
+
+function modalLayerOpen(): boolean {
+	return document.querySelector(OPEN_MODAL_LAYER) !== null;
+}
+
+function useModalLayerOpen(): boolean {
+	return useSyncExternalStore(subscribeModalLayers, modalLayerOpen, () => false);
+}
+
+const Dialog = DialogPrimitive.Root;
+const DialogTrigger = DialogPrimitive.Trigger;
+const DialogClose = DialogPrimitive.Close;
+
+function DialogOverlay({
+	className,
+	...props
+}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+	return (
+		<DialogPrimitive.Overlay
+			data-testid="dialog-overlay"
+			data-modal-layer=""
+			className={cn("fixed inset-0 z-50 bg-overlay", className)}
+			{...props}
+		/>
+	);
+}
+
+function DialogContent({
+	className,
+	children,
+	hideClose = false,
+	...props
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { hideClose?: boolean }) {
+	const t = useT();
+	return (
+		<DialogPrimitive.Portal>
+			<DialogOverlay />
+			<DialogPrimitive.Content
+				className={cn(
+					"-translate-x-1/2 -translate-y-1/2 fixed top-1/2 left-1/2 z-50 flex w-full max-w-[28rem] flex-col gap-16 rounded-lg border border-border-default bg-container-elevated-bg p-16 text-text-default shadow-[var(--shadow-lg)]",
+					className,
+				)}
+				{...props}
+			>
+				{children}
+				{hideClose ? null : (
+					<DialogPrimitive.Close asChild>
+						<IconButton icon={X} label={t("common.close")} className="absolute top-12 right-12" />
+					</DialogPrimitive.Close>
+				)}
+			</DialogPrimitive.Content>
+		</DialogPrimitive.Portal>
+	);
+}
+
+function DialogPanel({
+	className,
+	...props
+}: React.ComponentProps<typeof DialogPrimitive.Content>) {
+	return (
+		<DialogPrimitive.Content
+			className={cn(
+				"flex flex-col border-border-default bg-container-elevated-bg text-text-default outline-none",
+				className,
+			)}
+			{...props}
+		/>
+	);
+}
+
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+	return <div className={cn("flex flex-col gap-4", className)} {...props} />;
+}
+
+function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			className={cn("flex flex-col-reverse gap-8 sm:flex-row sm:justify-end", className)}
+			{...props}
+		/>
+	);
+}
+
+function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
+	return (
+		<DialogPrimitive.Title
+			className={cn("tr-title-dialog text-text-default", className)}
+			{...props}
+		/>
+	);
+}
+
+function DialogDescription({
+	className,
+	...props
+}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+	return (
+		<DialogPrimitive.Description
+			className={cn("tr-text-ui text-text-muted", className)}
+			{...props}
+		/>
+	);
+}
+
+export {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogPanel,
+	DialogTitle,
+	DialogTrigger,
+	useModalLayerOpen,
+};

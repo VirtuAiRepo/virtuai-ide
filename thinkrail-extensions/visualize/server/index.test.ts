@@ -1,0 +1,164 @@
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import extension from "./index";
+
+type ExecResult = { content: Array<{ type: string; text: string }>; details: unknown };
+type CapturedTool = {
+	name: string;
+	promptGuidelines?: string[];
+	execute: (
+		id: string,
+		params: unknown,
+		signal?: unknown,
+		onUpdate?: unknown,
+		ctx?: { cwd: string },
+	) => Promise<ExecResult>;
+};
+
+function loadTool(): CapturedTool {
+	let captured: CapturedTool | undefined;
+	const fakePi = {
+		registerTool: (def: CapturedTool) => {
+			captured = def;
+		},
+	};
+	const factory = extension.extensions[0];
+	if (!factory) throw new Error("server half declares no extension factory");
+	factory(fakePi as unknown as ExtensionAPI);
+	if (!captured) throw new Error("factory did not register a tool");
+	return captured;
+}
+
+describe("visualize server half", () => {
+	test("composes one parent extension named visualize and no children or skills", () => {
+		expect(extension.name).toBe("visualize");
+		expect(extension.title).toBe("Visualize");
+		expect(extension.description).toBeTruthy();
+		expect(extension.extensions).toHaveLength(1);
+		expect(extension).not.toHaveProperty("childExtensions");
+		expect(extension).not.toHaveProperty("skillPackages");
+		expect(loadTool().name).toBe("visualize");
+	});
+
+	test("accepts valid Mermaid without leaking DOM globals", async () => {
+		const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+		const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+		const res = await loadTool().execute("id", {
+			type: "diagram",
+			mermaid: "flowchart LR\n A[Start] --> B[Done]",
+		});
+		expect(res.content[0]?.text).toContain("```mermaid");
+		expect(res.details).toEqual({
+			type: "diagram",
+			mermaid: "flowchart LR\n A[Start] --> B[Done]",
+		});
+		expect(Object.getOwnPropertyDescriptor(globalThis, "window")).toEqual(windowDescriptor);
+		expect(Object.getOwnPropertyDescriptor(globalThis, "document")).toEqual(documentDescriptor);
+	});
+
+	test("rejects a dangling flowchart edge with the strict mermaid parse error", async () => {
+		await expect(
+			loadTool().execute("id", { type: "diagram", mermaid: "flowchart LR\n A -->" }),
+		).rejects.toThrow(
+			/visualize: invalid Mermaid syntax in `mermaid`[\s\S]*parse error[\s\S]*correct the syntax and call `visualize` again/i,
+		);
+	});
+
+	test("rejects invalid comparison Mermaid with its option location", async () => {
+		await expect(
+			loadTool().execute("id", {
+				type: "comparison",
+				options: [
+					{ name: "Valid", mermaid: "flowchart LR\n A --> B" },
+					{ name: "Invalid", mermaid: "flowchart LR\n A -->" },
+				],
+			}),
+		).rejects.toThrow(/visualize: invalid Mermaid syntax in `options\[1\]\.mermaid`/);
+	});
+
+	test("validates diagram kinds whose sanitizer needs a real document", async () => {
+		for (const mermaid of [
+			"classDiagram\n class A\n A : +run()",
+			"stateDiagram-v2\n [*] --> Idle\n Idle --> Running",
+			"gantt\n title T\n dateFormat YYYY-MM-DD\n section S\n Task :a1, 2024-01-01, 3d",
+			"mindmap\n  root((r))\n    child",
+		]) {
+			await expect(loadTool().execute("id", { type: "diagram", mermaid })).resolves.toBeDefined();
+		}
+	});
+
+	test("serializes Mermaid parsing across tool instances", async () => {
+		await loadTool().execute("warmup", { type: "diagram", mermaid: "flowchart LR\n A --> B" });
+		const mermaid = (await import("mermaid")).default;
+		const parseDescriptor = Object.getOwnPropertyDescriptor(mermaid, "parse");
+		let active = 0;
+		let maxActive = 0;
+		try {
+			Object.defineProperty(mermaid, "parse", {
+				configurable: true,
+				value: async () => {
+					active += 1;
+					maxActive = Math.max(maxActive, active);
+					await Bun.sleep(10);
+					active -= 1;
+				},
+				writable: true,
+			});
+			await Promise.all([
+				loadTool().execute("first", { type: "diagram", mermaid: "flowchart LR\n A --> B" }),
+				loadTool().execute("second", { type: "diagram", mermaid: "flowchart LR\n C --> D" }),
+			]);
+			expect(maxActive).toBe(1);
+		} finally {
+			if (parseDescriptor) Object.defineProperty(mermaid, "parse", parseDescriptor);
+		}
+	});
+
+	test("shows workspace files and rejects missing, directory, and escaping paths", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "visualize-files-"));
+		mkdirSync(join(cwd, ".virtuai/context/mockups"), { recursive: true });
+		writeFileSync(join(cwd, ".virtuai/context/mockups/after.html"), "<p>after</p>");
+		writeFileSync(join(cwd, "before.html"), "<p>before</p>");
+		const tool = loadTool();
+		const run = (params: unknown) => tool.execute("id", params, undefined, undefined, { cwd });
+		await expect(
+			run({ type: "file", path: ".virtuai/context/mockups/after.html", before: "before.html" }),
+		).resolves.toBeDefined();
+		await expect(run({ type: "file", path: "missing.html" })).rejects.toThrow(
+			/cannot show `path` \(missing\.html\): no such file/,
+		);
+		await expect(run({ type: "file", path: ".virtuai" })).rejects.toThrow(/not a regular file/);
+		await expect(
+			run({ type: "file", path: "before.html", before: "../outside.html" }),
+		).rejects.toThrow(/cannot show `before`[\s\S]*inside it/);
+		await expect(run({ type: "file", path: join(cwd, "before.html") })).rejects.toThrow(
+			/relative to the workspace/,
+		);
+	});
+
+	test("file checks follow the host's read guard: dot-dot names pass, .git and escaping links do not", async () => {
+		const root = mkdtempSync(join(tmpdir(), "visualize-guard-"));
+		const cwd = join(root, "workspace");
+		const outside = join(root, "outside");
+		mkdirSync(join(cwd, ".git"), { recursive: true });
+		mkdirSync(outside);
+		writeFileSync(join(cwd, "..draft.html"), "<p>draft</p>");
+		writeFileSync(join(cwd, ".git", "config"), "[core]");
+		writeFileSync(join(outside, "secret.html"), "<p>secret</p>");
+		symlinkSync(outside, join(cwd, "linked"), "junction");
+		const tool = loadTool();
+		const run = (path: string) =>
+			tool.execute("id", { type: "file", path }, undefined, undefined, { cwd });
+
+		await expect(run("..draft.html")).resolves.toBeDefined();
+		await expect(run(".git/config")).rejects.toThrow(/\.git directory is not shown/);
+		await expect(run("linked/secret.html")).rejects.toThrow(/a link points outside it/);
+	});
+
+	test("points the mockup guideline at the gitignored scratch directory", () => {
+		expect(loadTool().promptGuidelines?.[0]).toContain("`.virtuai/context/mockups/`");
+	});
+});

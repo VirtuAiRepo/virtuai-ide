@@ -1,0 +1,376 @@
+import { realpathSync, rmSync, utimesSync } from "node:fs";
+import type { Locator, Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import type { ToolCall, ToolResponsePendingDetails } from "@thinkrail/contracts";
+import type {
+	AskUserQuestionArgs,
+	AskUserQuestionOption,
+} from "@thinkrail/pi-ask-user-question/core";
+import {
+	enterDefaultWorkspace,
+	hideAuxiliaryWorkbench,
+	openFixtureProject,
+	openPersistedChat,
+} from "./fixtures/app";
+import {
+	moveMouseToChatViewport,
+	nestedVerticalScrollSurfaces,
+	readChatScrollGeometry,
+	readChatViewportIntersection,
+} from "./fixtures/chatScroll";
+import { E2E_FIXTURE_REPO } from "./fixtures/paths";
+import { seedWorkspaceSession } from "./fixtures/sessions";
+
+const BASE_TS = 1_700_800_000_000;
+
+function tallPreview(pageName: string): string {
+	return Array.from(
+		{ length: 24 },
+		(_, index) =>
+			`${pageName} detail ${index + 1}. This persisted preview is intentionally long enough to put the questionnaire footer on a later transcript viewport.`,
+	).join("\n\n");
+}
+
+function optionsFor(pageName: string) {
+	return [
+		{
+			label: `${pageName} alpha`,
+			description: "Use the first deterministic fixture choice.",
+			preview: tallPreview(pageName),
+		},
+		{ label: `${pageName} beta`, description: "Use the second deterministic fixture choice." },
+		{ label: `${pageName} gamma`, description: "Use the third deterministic fixture choice." },
+	] satisfies AskUserQuestionOption[];
+}
+
+async function openPersistedChatAfterInput(page: Page, title: string): Promise<void> {
+	await openPersistedChat(page, title);
+	const chatTab = page
+		.locator('[data-testid="editor-tab"][data-kind="chat"]')
+		.filter({ hasText: title });
+	await chatTab.hover();
+	await chatTab.getByTestId("editor-tab-close").click();
+	await expect(chatTab).toHaveCount(0);
+	await openPersistedChat(page, title);
+}
+
+async function selectOldestFirst(page: Page): Promise<void> {
+	await page.getByTestId("open-settings").click();
+	await page.getByTestId("settings-nav-chat").click();
+	const option = page.getByTestId("chat-order-oldest-first");
+	await option.click();
+	await expect(option).toHaveAttribute("data-active", "true");
+	await page.keyboard.press("Escape");
+}
+
+function seedQuestionnaire(
+	name: string,
+	toolCallId: string,
+	args: AskUserQuestionArgs & ToolCall["arguments"],
+) {
+	const ack: ToolResponsePendingDetails = { kind: "ack" };
+	const session = seedWorkspaceSession(realpathSync(E2E_FIXTURE_REPO), {
+		name,
+		messages: [
+			{ role: "user", text: "Ask me these questions.", timestamp: BASE_TS },
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: toolCallId,
+						name: "ask_user_question",
+						arguments: args,
+					},
+				],
+				stopReason: "toolUse",
+				timestamp: BASE_TS + 1_000,
+			},
+			{
+				role: "toolResult",
+				toolCallId,
+				toolName: "ask_user_question",
+				content: [{ type: "text", text: "Questions shown to the user; awaiting an answer." }],
+				details: ack,
+				isError: false,
+				timestamp: BASE_TS + 2_000,
+			},
+		],
+	});
+	utimesSync(session.path, new Date(BASE_TS), new Date(BASE_TS));
+	return session;
+}
+
+function seedTallQuestionnaire(name: string, toolCallId: string) {
+	return seedQuestionnaire(name, toolCallId, {
+		questions: [
+			{
+				question: "Which first-page rollout should we use?",
+				header: "First page",
+				options: optionsFor("First"),
+			},
+			{
+				question: "Which second-page rollout should we use?",
+				header: "Second page",
+				options: optionsFor("Second"),
+			},
+		],
+	});
+}
+
+async function wheelUntilChatElementIntersects(
+	page: Page,
+	chatScroll: Locator,
+	target: Locator,
+): Promise<void> {
+	await moveMouseToChatViewport(page, chatScroll);
+	for (let attempt = 0; attempt < 16; attempt += 1) {
+		if ((await readChatViewportIntersection(target)).intersects) return;
+		const before = await readChatScrollGeometry(chatScroll);
+		await page.mouse.wheel(0, before.clientHeight * 0.75);
+		await expect
+			.poll(async () => {
+				const after = await readChatScrollGeometry(chatScroll);
+				return (
+					(await readChatViewportIntersection(target)).intersects ||
+					after.distanceFromStart > before.distanceFromStart
+				);
+			})
+			.toBe(true);
+	}
+	await expect.poll(async () => (await readChatViewportIntersection(target)).intersects).toBe(true);
+}
+
+test("a persisted tall questionnaire reveals page changes and a restored page without hidden review focus", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await openFixtureProject(page);
+
+	const session = seedTallQuestionnaire("tall persisted questionnaire", "ask-tall-pages");
+
+	try {
+		await selectOldestFirst(page);
+		await enterDefaultWorkspace(page);
+		await hideAuxiliaryWorkbench(page);
+		await openPersistedChatAfterInput(page, "tall persisted questionnaire");
+
+		const chatScroll = page.getByTestId("chat-scroll");
+		const card = page.locator('[data-testid="ask-user-question"][data-tone="active"]');
+		await expect(card).toBeVisible();
+		await expect(card.getByTestId("ask-question-text")).toHaveText(
+			"Which first-page rollout should we use?",
+		);
+
+		const firstOption = card.getByTestId("ask-option").first();
+		await expect(firstOption).toBeFocused();
+		await expect(chatScroll).toHaveAttribute("data-follow-state", "following");
+		await expect(page.getByTestId("scroll-to-bottom")).toHaveCount(0);
+		await firstOption.click();
+		await expect(firstOption).toHaveAttribute("data-selected", "true");
+		const next = card.getByTestId("ask-continue");
+		expect((await readChatViewportIntersection(next)).intersects).toBe(false);
+		await wheelUntilChatElementIntersects(page, chatScroll, next);
+		await expect.poll(async () => (await readChatViewportIntersection(next)).intersects).toBe(true);
+
+		await next.click();
+		const secondHeading = card.getByTestId("ask-question-text");
+		await expect(secondHeading).toHaveText("Which second-page rollout should we use?");
+		const secondFirstOption = card.getByTestId("ask-option").first();
+		await expect(secondFirstOption).toBeFocused();
+		await expect
+			.poll(async () => ({
+				heading: (await readChatViewportIntersection(secondHeading)).intersects,
+				firstOption: (await readChatViewportIntersection(secondFirstOption)).intersects,
+			}))
+			.toEqual({ heading: true, firstOption: true });
+
+		const chatTabs = page.locator('[data-testid="editor-tab"][data-kind="chat"]');
+		await chatTabs.first().getByTestId("editor-tab-close").click();
+		await expect(chatTabs).toHaveCount(0);
+		await page.getByTestId("chat-history").first().click();
+		await page
+			.getByTestId("closed-chat-item")
+			.filter({ hasText: "tall persisted questionnaire" })
+			.click();
+		await expect(chatTabs).toHaveCount(1);
+
+		const reopenedCard = page.locator('[data-testid="ask-user-question"][data-tone="active"]');
+		const reopenedHeading = reopenedCard.getByTestId("ask-question-text");
+		const reopenedFirstOption = reopenedCard.getByTestId("ask-option").first();
+		await expect(reopenedHeading).toHaveText("Which second-page rollout should we use?");
+		await expect(reopenedFirstOption).toBeFocused();
+		await expect
+			.poll(async () => ({
+				heading: (await readChatViewportIntersection(reopenedHeading)).intersects,
+				firstOption: (await readChatViewportIntersection(reopenedFirstOption)).intersects,
+			}))
+			.toEqual({ heading: true, firstOption: true });
+
+		await reopenedFirstOption.click();
+		await page.setViewportSize({ width: 1280, height: 440 });
+		const reviewNext = reopenedCard.getByTestId("ask-continue");
+		await wheelUntilChatElementIntersects(page, chatScroll, reviewNext);
+		await reviewNext.click();
+
+		const reviewTitle = reopenedCard.getByTestId("ask-review-title");
+		const submit = reopenedCard.getByTestId("ask-submit");
+		await expect(reviewTitle).toBeFocused();
+		await expect
+			.poll(async () => (await readChatViewportIntersection(reviewTitle)).intersects)
+			.toBe(true);
+		await expect(submit).toBeEnabled();
+		await expect
+			.poll(async () => (await readChatViewportIntersection(submit)).intersects)
+			.toBe(false);
+		await page.keyboard.press("Enter");
+		await expect(reopenedCard).toHaveAttribute("data-tone", "active");
+		await expect(reopenedCard.getByTestId("ask-sent")).toHaveCount(0);
+
+		expect(await nestedVerticalScrollSurfaces(reopenedCard)).toEqual([]);
+		await expect(chatScroll).toHaveAttribute("data-follow-state", "detached");
+	} finally {
+		rmSync(session.path, { force: true });
+	}
+});
+
+test("a key pressed before a reopened questionnaire's first frame does not cancel its focus claim", async ({
+	page,
+}) => {
+	await openFixtureProject(page);
+	const session = seedQuestionnaire("early input questionnaire", "ask-early-input", {
+		questions: [
+			{
+				question: "Which early rollout should we use?",
+				header: "Early",
+				options: [
+					{ label: "Early alpha", description: "Use the first fixture choice." },
+					{ label: "Early beta", description: "Use the second fixture choice." },
+				],
+			},
+		],
+	});
+	type HeldFrames = Window & { releaseHeldFrames?: () => void };
+
+	try {
+		await enterDefaultWorkspace(page);
+		await hideAuxiliaryWorkbench(page);
+		await openPersistedChatAfterInput(page, "early input questionnaire");
+		const card = page.locator('[data-testid="ask-user-question"][data-tone="active"]');
+		await expect(card.getByTestId("ask-option").first()).toBeFocused();
+
+		const chatTabs = page.locator('[data-testid="editor-tab"][data-kind="chat"]');
+		await chatTabs.first().getByTestId("editor-tab-close").click();
+		await expect(chatTabs).toHaveCount(0);
+		await page.getByTestId("chat-history").first().click();
+		await page.evaluate(() => {
+			const held: FrameRequestCallback[] = [];
+			const request = window.requestAnimationFrame.bind(window);
+			window.requestAnimationFrame = (callback) => held.push(callback);
+			(window as HeldFrames).releaseHeldFrames = () => {
+				window.requestAnimationFrame = request;
+				for (const callback of held.splice(0)) request(callback);
+			};
+		});
+		await page
+			.getByTestId("closed-chat-item")
+			.filter({ hasText: "early input questionnaire" })
+			.click();
+		await expect(card).toBeVisible();
+		await page.keyboard.press("Shift");
+		await page.evaluate(() => (window as HeldFrames).releaseHeldFrames?.());
+		await expect(card.getByTestId("ask-option").first()).toBeFocused();
+	} finally {
+		await page.evaluate(() => (window as HeldFrames).releaseHeldFrames?.()).catch(() => undefined);
+		rmSync(session.path, { force: true });
+	}
+});
+
+test("a questionnaire with more than four questions exposes every page and the full review", async ({
+	page,
+}) => {
+	await openFixtureProject(page);
+	const session = seedQuestionnaire("six-question round", "ask-six-questions", {
+		questions: Array.from({ length: 6 }, (_, index) => ({
+			question: `Which choice should question ${index + 1} use?`,
+			header: `Q${index + 1}`,
+			options: [
+				{ label: `Choice ${index + 1}A`, description: "Use the first fixture choice." },
+				{ label: `Choice ${index + 1}B`, description: "Use the second fixture choice." },
+			],
+		})),
+	});
+
+	try {
+		await enterDefaultWorkspace(page);
+		await hideAuxiliaryWorkbench(page);
+		await openPersistedChatAfterInput(page, "six-question round");
+
+		const card = page.locator('[data-testid="ask-user-question"][data-tone="active"]');
+		await expect(card).toBeVisible();
+		await expect(card.getByTestId("ask-tab")).toHaveCount(7);
+		await card.getByTestId("ask-tab").nth(5).click();
+		await expect(card.getByTestId("ask-question-text")).toHaveText(
+			"Which choice should question 6 use?",
+		);
+		await card.getByTestId("ask-option").first().click();
+		await card.getByTestId("ask-continue").click();
+
+		await expect(card.getByTestId("ask-review-title")).toBeVisible();
+		await expect(card.getByTestId("ask-review-item")).toHaveCount(6);
+		await expect(card.getByTestId("ask-unanswered")).toContainText("Q1, Q2, Q3, Q4, Q5");
+	} finally {
+		rmSync(session.path, { force: true });
+	}
+});
+
+test("a coarse pointer reveals a returning page's text target without focusing it", async ({
+	browser,
+}) => {
+	const context = await browser.newContext({
+		hasTouch: true,
+		viewport: { width: 1280, height: 720 },
+	});
+	const page = await context.newPage();
+	await openFixtureProject(page);
+	const session = seedTallQuestionnaire("touch questionnaire", "ask-touch-pages");
+
+	try {
+		await enterDefaultWorkspace(page);
+		await hideAuxiliaryWorkbench(page);
+		await openPersistedChatAfterInput(page, "touch questionnaire");
+
+		const chatScroll = page.getByTestId("chat-scroll");
+		const card = page.locator('[data-testid="ask-user-question"][data-tone="active"]');
+		await expect(card).toBeVisible();
+		await card.getByTestId("ask-option").first().click();
+		const next = card.getByTestId("ask-continue");
+		await wheelUntilChatElementIntersects(page, chatScroll, next);
+		await next.click();
+
+		const custom = card.getByTestId("ask-custom");
+		await custom.fill("Use a custom second-stage rollout.");
+		await expect(custom).toBeFocused();
+		await card.getByTestId("ask-tab").first().click();
+		await expect(card.getByTestId("ask-question-text")).toHaveText(
+			"Which first-page rollout should we use?",
+		);
+		await wheelUntilChatElementIntersects(page, chatScroll, next);
+		await next.click();
+
+		const secondHeading = card.getByTestId("ask-question-text");
+		await expect(secondHeading).toHaveText("Which second-page rollout should we use?");
+		await expect
+			.poll(async () => ({
+				heading: (await readChatViewportIntersection(secondHeading)).intersects,
+				custom: (await readChatViewportIntersection(custom)).intersects,
+			}))
+			.toEqual({ heading: true, custom: true });
+		await expect(custom).not.toBeFocused();
+		expect(await nestedVerticalScrollSurfaces(card)).toEqual([]);
+		await expect(chatScroll).toHaveAttribute("data-follow-state", "detached");
+	} finally {
+		rmSync(session.path, { force: true });
+		await context.close();
+	}
+});

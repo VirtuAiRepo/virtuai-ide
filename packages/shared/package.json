@@ -1,0 +1,33 @@
+{
+	"name": "@thinkrail/shared",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./shellEnv": "./src/shellEnv.ts",
+		"./freePort": "./src/freePort.ts",
+		"./startupMark": "./src/startupMark.ts",
+		"./version": "./src/version.ts",
+		"./windowsIdentity": "./src/windowsIdentity.ts",
+		"./jbcentral": "./src/jbcentral.ts",
+		"./paths": "./src/paths.ts",
+		"./codedError": "./src/codedError.ts",
+		"./removeTree": "./src/removeTree.ts",
+		"./spawn": "./src/spawn.ts",
+		"./toolHomes": "./src/toolHomes.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"generate-icons": "bun scripts/generate-icons.ts"
+	},
+	"dependencies": {
+		"@thinkrail/contracts": "workspace:*"
+	},
+	"devDependencies": {
+		"@resvg/resvg-js": "2.6.2",
+		"@types/bun": "catalog:",
+		"resedit": "catalog:",
+		"typescript": "catalog:"
+	}
+}

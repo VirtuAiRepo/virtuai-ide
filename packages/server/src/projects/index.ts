@@ -1,0 +1,28 @@
+export {
+	cancelProjectClone,
+	cloneProject,
+	inspectCloneDestination,
+	startProjectClone,
+} from "./clone";
+export {
+	acknowledgeProjectSkills,
+	approveProjectMcpServer,
+	closeProject,
+	createProject,
+	getProjects,
+	grantProjectMcpTool,
+	initProject,
+	inspectProjectPath,
+	listProjects,
+	listRecentProjects,
+	openProject,
+	refreshRecentProjectFolders,
+	renameProject,
+	revokeProjectMcpTool,
+	setPiTrustSeed,
+	setProjectGroupEnabled,
+	setProjectMcpOverride,
+	setProjectPublisher,
+	setProjectSkillEnabled,
+	setProjectTrust,
+} from "./projects";

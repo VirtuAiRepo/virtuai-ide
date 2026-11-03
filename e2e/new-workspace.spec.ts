@@ -1,0 +1,455 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { expect, type Page, test } from "@playwright/test";
+import {
+	createWorkspaceViaDialog,
+	openAppFresh,
+	openFixtureProject,
+	worktreeRows,
+} from "./fixtures/app";
+import { git, gitAs, gitText } from "./fixtures/git";
+import { E2E_DATA_DIR, E2E_FIXTURE_REPO, E2E_PICK_DIR_POINTER } from "./fixtures/paths";
+
+function seedRemoteProject(name: string, withUpstream = false) {
+	const root = join(E2E_DATA_DIR, name);
+	const repo = join(root, "repo");
+	const origin = join(root, "origin.git");
+	rmSync(root, { recursive: true, force: true });
+	mkdirSync(repo, { recursive: true });
+	git(repo, "init", "-b", "main");
+	git(repo, "config", "user.email", "e2e@thinkrail.test");
+	git(repo, "config", "user.name", "ThinkRail E2E");
+	git(repo, "config", "commit.gpgsign", "false");
+	writeFileSync(join(repo, "README.md"), "base\n");
+	git(repo, "add", "README.md");
+	git(repo, "commit", "-m", "base");
+	git(root, "init", "--bare", "-b", "main", origin);
+	git(repo, "remote", "add", "origin", origin);
+	git(repo, "push", "origin", "main");
+	git(repo, "fetch", "origin");
+	git(repo, "remote", "set-head", "origin", "main");
+	if (withUpstream) {
+		const upstream = join(root, "upstream.git");
+		git(root, "init", "--bare", "-b", "trunk", upstream);
+		git(repo, "remote", "add", "upstream", upstream);
+		git(repo, "push", "upstream", "main:trunk");
+		git(repo, "fetch", "upstream");
+		git(repo, "remote", "set-head", "upstream", "trunk");
+	}
+	return { root, repo, origin };
+}
+
+async function openPickedProjectWorkspaceDialog(page: Page, repo: string) {
+	writeFileSync(E2E_PICK_DIR_POINTER, repo);
+	await page.getByTestId("add-project-menu").click();
+	await page.getByTestId("menu-open-project").click();
+	await expect(page.getByTestId("project-item").first()).toBeVisible();
+	await page.getByTestId("add-workspace").first().click();
+	const dialog = page.getByTestId("new-workspace-dialog");
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
+
+function refOid(repo: string, ref: string): string | null {
+	const result = spawnSync("git", ["-C", repo, "rev-parse", "--verify", ref], {
+		encoding: "utf8",
+	});
+	return result.status === 0 ? result.stdout.trim() : null;
+}
+
+test("the dialog lists local branches (no stray origin) and creates a worktree", async ({
+	page,
+}) => {
+	await openFixtureProject(page);
+
+	await page.getByTestId("add-workspace").first().click();
+	const dialog = page.getByTestId("new-workspace-dialog");
+	await expect(dialog).toBeVisible();
+
+	await expect(dialog.getByRole("heading", { name: "Create workspace" })).toBeVisible();
+	await expect(dialog).toContainText("A separate checkout on its own new branch");
+	await expect(dialog.getByTestId("ws-prompt-note")).toHaveCount(0);
+	await expect(dialog).toContainText("Files, chats, changes, and terminals stay scoped to it");
+	await expect(dialog.getByTestId("ws-target-worktree")).toHaveAttribute("data-active", "true");
+
+	await dialog.getByTestId("ws-target-default").click();
+	await expect(dialog.getByRole("heading", { name: "Work in project folder" })).toBeVisible();
+	await expect(dialog).toContainText("no isolation");
+	await expect(dialog.getByTestId("ws-branch-picker")).toHaveCount(0);
+	await expect(page.getByTestId("create-workspace")).toHaveText(/Start/);
+	await dialog.getByTestId("ws-target-worktree").click();
+	await expect(dialog.getByRole("heading", { name: "Create workspace" })).toBeVisible();
+	await expect(dialog.getByTestId("ws-branch-picker")).toBeVisible();
+	await expect(page.getByTestId("create-workspace")).toHaveText(/Create/);
+
+	await expect(dialog.getByTestId("ws-project-picker")).toContainText("sample-project");
+
+	const branchPicker = dialog.getByTestId("ws-branch-picker");
+	await expect(branchPicker).toContainText("From");
+	await expect(branchPicker).toContainText("main");
+
+	await branchPicker.click();
+	const mainOption = page.locator('[data-testid="branch-option"][data-branch="main"]');
+	await expect(mainOption).toBeVisible();
+	await expect(mainOption).toContainText("default");
+	await expect(page.locator('[data-testid="branch-option"][data-branch="origin"]')).toHaveCount(0);
+
+	await page.getByPlaceholder("Search branches…").fill("zzz-no-such-branch");
+	await expect(page.getByTestId("branch-option")).toHaveCount(0);
+	await expect(page.getByText("No branches found.")).toBeVisible();
+	await page.getByPlaceholder("Search branches…").fill("main");
+	await expect(mainOption).toBeVisible();
+	await page.keyboard.press("Escape");
+
+	const pill = dialog.getByTestId("model-selector");
+	await expect(pill).toContainText("Default");
+	const effort = dialog.getByTestId("thinking-selector");
+	if ((await effort.count()) > 0) {
+		await expect(effort).toContainText(/off|minimal|low|medium|high|xhigh|max/);
+	}
+
+	await pill.click();
+	await expect(page.getByTestId("model-option-default")).toBeVisible();
+	const refresh = page.getByTestId("model-refresh");
+	await expect(refresh).toBeVisible();
+	await refresh.evaluate((el) => {
+		const seen: string[] = [];
+		(window as unknown as { __refreshStates: string[] }).__refreshStates = seen;
+		new MutationObserver(() => seen.push(el.getAttribute("data-refreshing") ?? "")).observe(el, {
+			attributes: true,
+			attributeFilter: ["data-refreshing"],
+		});
+	});
+	await refresh.click();
+	await expect(refresh).toHaveAttribute("data-refreshing", "false");
+	await expect(refresh).toBeEnabled();
+	expect(
+		await page.evaluate(() => (window as unknown as { __refreshStates: string[] }).__refreshStates),
+	).toContain("true");
+	await page.keyboard.press("Escape");
+
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	await expect(worktreeRows(page)).toHaveCount(0);
+
+	await page.getByTestId("add-workspace").first().click();
+	await expect(dialog).toBeVisible();
+	await page.getByTestId("create-workspace").click();
+	await expect(dialog).toBeHidden();
+	await expect(worktreeRows(page)).toHaveCount(1);
+	await expect(worktreeRows(page).first()).toHaveAttribute("data-active", "true");
+
+	const scope = page.getByTestId("scope-context");
+	await expect(scope).toHaveAttribute("data-context", "workspace");
+	await expect(scope).toContainText("sample-project");
+	await expect(scope).toContainText("workspace-1");
+	await expect(scope).toContainText("from main");
+
+	await expect(page.locator('[data-testid="editor-tab"][data-kind="chat"]')).toHaveCount(1);
+	await expect(page.getByTestId("chat-input")).toBeVisible();
+	await expect(page.locator('[data-testid="chat-message"][data-role="user"]')).toHaveCount(0);
+});
+
+test("folder-mode Start with an empty prompt lands in a fresh chat in the Default workspace", async ({
+	page,
+}) => {
+	await openFixtureProject(page);
+	await page.getByTestId("add-workspace").first().click();
+	const dialog = page.getByTestId("new-workspace-dialog");
+	await expect(dialog).toBeVisible();
+	await dialog.getByTestId("ws-target-default").click();
+	await page.getByTestId("create-workspace").click();
+	await expect(dialog).toBeHidden();
+
+	await expect(page.getByTestId("scope-name")).toHaveText("Default");
+	await expect(worktreeRows(page)).toHaveCount(0);
+	await expect(page.locator('[data-testid="editor-tab"][data-kind="chat"]')).toHaveCount(1);
+	await expect(page.getByTestId("chat-input")).toBeVisible();
+	await expect(page.locator('[data-testid="chat-message"][data-role="user"]')).toHaveCount(0);
+});
+
+test("a project's committed skills are gated behind trust, then autocomplete", async ({ page }) => {
+	await openFixtureProject(page);
+
+	await page.getByTestId("add-workspace").first().click();
+	const dialog = page.getByTestId("new-workspace-dialog");
+	await expect(dialog).toBeVisible();
+	const prompt = dialog.getByTestId("ws-prompt");
+	const portable = dialog.getByTestId("slash-command").filter({ hasText: "/skill:e2e-portable" });
+
+	await expect(dialog.getByTestId("ws-trust-notice")).toBeVisible();
+	await prompt.fill("/e2e");
+	await expect(portable).toHaveCount(0);
+
+	await dialog.getByTestId("ws-trust-project").click();
+	await expect(dialog.getByTestId("ws-trust-notice")).toBeHidden();
+	await prompt.fill("/e2e");
+	await expect(portable).toBeVisible();
+	await expect(portable).toContainText("skill/project");
+
+	await prompt.press("Escape");
+	await expect(dialog.getByTestId("slash-menu")).toBeHidden();
+	await expect(dialog).toBeVisible();
+	await prompt.fill("/e2");
+	await expect(portable).toBeVisible();
+
+	await prompt.press("Enter");
+	await expect(prompt).toHaveValue("/skill:e2e-portable ");
+	await expect(dialog).toBeVisible();
+	await expect(worktreeRows(page)).toHaveCount(0);
+});
+
+test("a project whose only gated resources are subagent definitions still asks for trust and names what it loads", async ({
+	page,
+}) => {
+	const definitions = join(E2E_FIXTURE_REPO, ".pi", "agents");
+	mkdirSync(definitions, { recursive: true });
+	writeFileSync(
+		join(definitions, "e2e-definer.md"),
+		"---\nname: e2e-definer\ndescription: Repo-defined agent\n---\n\nDefine things.\n",
+	);
+	try {
+		await openFixtureProject(page);
+		await page.getByTestId("add-workspace").first().click();
+		const dialog = page.getByTestId("new-workspace-dialog");
+		const notice = dialog.getByTestId("ws-trust-notice");
+		await expect(notice).toContainText("1 skill and its own Pi resources");
+		await expect(notice).toContainText("subagent definitions");
+
+		await dialog.getByTestId("ws-trust-project").click();
+		await expect(notice).toBeHidden();
+	} finally {
+		rmSync(join(E2E_FIXTURE_REPO, ".pi"), { recursive: true, force: true });
+	}
+});
+
+test("the start prompt shares template completion and slot behavior without live-only commands", async ({
+	page,
+}) => {
+	const templateFile = join(E2E_FIXTURE_REPO, ".pi", "prompts", "workspace-kickoff.md");
+	mkdirSync(join(E2E_FIXTURE_REPO, ".pi", "prompts"), { recursive: true });
+	writeFileSync(
+		templateFile,
+		`---
+description: Prepare a workspace task
+argument-hint: "[topic] [check]"
+---
+Prepare $1 and verify \${2:-tests}.
+`,
+	);
+
+	try {
+		await openFixtureProject(page);
+		await page.getByTestId("add-workspace").first().click();
+		const dialog = page.getByTestId("new-workspace-dialog");
+		const prompt = dialog.getByTestId("ws-prompt");
+
+		await prompt.fill("/compact");
+		await expect(dialog.getByTestId("slash-command").filter({ hasText: "/compact" })).toHaveCount(
+			0,
+		);
+
+		await prompt.fill("/review");
+		const globalTemplate = dialog.getByTestId("slash-command").filter({ hasText: "/review" });
+		await expect(globalTemplate).toBeVisible();
+		await expect(globalTemplate).toContainText("prompt/user");
+
+		await prompt.fill("/workspace-k");
+		const projectTemplate = dialog
+			.getByTestId("slash-command")
+			.filter({ hasText: "/workspace-kickoff" });
+		await expect(projectTemplate).toBeVisible();
+		await expect(projectTemplate).toContainText("prompt/project");
+		await projectTemplate.click();
+
+		await expect(prompt).toHaveValue("Prepare ⟨topic⟩ and verify tests.");
+		await expect(dialog.getByTestId("slot-hint")).toContainText("slot 1/2");
+		await prompt.pressSequentially("parser");
+		await prompt.press("Tab");
+		await expect(dialog.getByTestId("slot-hint")).toContainText("slot 2/2");
+
+		await prompt.press("Enter");
+		await expect(dialog).toBeHidden();
+		await expect(page.locator('[data-testid="chat-message"][data-role="user"]')).toContainText(
+			"Prepare parser and verify tests.",
+		);
+	} finally {
+		rmSync(templateFile, { force: true });
+	}
+});
+
+test("Enter in the prompt creates; Shift+Enter inserts a newline", async ({ page }) => {
+	await openFixtureProject(page);
+
+	await page.getByTestId("add-workspace").first().click();
+	const dialog = page.getByTestId("new-workspace-dialog");
+	await expect(dialog).toBeVisible();
+	const prompt = dialog.getByTestId("ws-prompt");
+
+	await prompt.fill("first line");
+	await expect(dialog.getByTestId("workspace-naming-hint")).toContainText(
+		"name the workspace and branch from your request",
+	);
+	await prompt.press("Shift+Enter");
+	await prompt.pressSequentially("second line");
+	await expect(prompt).toHaveValue("first line\nsecond line");
+	await expect(dialog).toBeVisible();
+	await expect(worktreeRows(page)).toHaveCount(0);
+
+	await prompt.fill("");
+	await expect(dialog.getByTestId("workspace-naming-hint")).toHaveCount(0);
+	await prompt.press("Enter");
+	await expect(dialog).toBeHidden();
+	await expect(worktreeRows(page)).toHaveCount(1);
+	await expect(page.locator('[data-testid="editor-tab"][data-kind="chat"]')).toHaveCount(1);
+	await expect(page.locator('[data-testid="chat-message"][data-role="user"]')).toHaveCount(0);
+});
+
+test("a base whose fetch fails reports git's error, not a request timeout", async ({ page }) => {
+	const remote = join(E2E_DATA_DIR, "dangling-head-remote.git");
+	const repo = join(E2E_DATA_DIR, "dangling-head-fixture");
+	for (const path of [remote, repo]) rmSync(path, { recursive: true, force: true });
+	mkdirSync(remote, { recursive: true });
+	git(remote, "init", "--bare", "-b", "main");
+	git(E2E_FIXTURE_REPO, "push", remote, "main");
+	git(E2E_DATA_DIR, "clone", remote, repo);
+	git(repo, "remote", "set-head", "origin", "main");
+	git(repo, "update-ref", "-d", "refs/remotes/origin/main");
+	rmSync(remote, { recursive: true, force: true });
+
+	try {
+		await openAppFresh(page);
+		writeFileSync(E2E_PICK_DIR_POINTER, repo);
+		await page.getByTestId("add-project-menu").click();
+		await page.getByTestId("menu-open-project").click();
+		await expect(page.getByTestId("project-item").first()).toBeVisible();
+
+		await page.getByTestId("add-workspace").first().click();
+		const dialog = page.getByTestId("new-workspace-dialog");
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByTestId("ws-branch-picker")).toContainText("origin/main");
+
+		await page.getByTestId("create-workspace").click();
+
+		const toast = page.getByTestId("toast");
+		await expect(toast).toContainText("Couldn't create workspace");
+		await expect(toast).toContainText("Could not fetch origin/main");
+		await expect(worktreeRows(page)).toHaveCount(0);
+		await expect(dialog).toBeVisible();
+		await expect(page.getByTestId("create-workspace")).toBeEnabled();
+		await expect(page.getByTestId("worktree-creating-row")).toHaveCount(0);
+	} finally {
+		writeFileSync(E2E_PICK_DIR_POINTER, E2E_FIXTURE_REPO);
+		rmSync(repo, { recursive: true, force: true });
+	}
+});
+
+test("the branch picker groups by host-supplied remotes and creates from the selected ref", async ({
+	page,
+}) => {
+	await openAppFresh(page);
+	const { repo } = seedRemoteProject("all-remotes-picker", true);
+	const dialog = await openPickedProjectWorkspaceDialog(page, repo);
+	await dialog.getByTestId("ws-branch-picker").click();
+
+	const headings = page.locator("[cmdk-group-heading]");
+	await expect(headings.filter({ hasText: /^Remote$/ })).toBeVisible();
+	await expect(headings.filter({ hasText: /^origin$/ })).toBeVisible();
+	await expect(headings.filter({ hasText: /^upstream$/ })).toBeVisible();
+	await expect(headings.filter({ hasText: /^Local$/ })).toBeVisible();
+	const origin = page.locator('[data-testid="branch-option"][data-branch="origin/main"]');
+	await expect(origin).toContainText("main");
+	await expect(origin).not.toContainText("origin/");
+	const upstream = page.locator('[data-testid="branch-option"][data-branch="upstream/trunk"]');
+	await expect(upstream).toContainText("trunk");
+	await expect(upstream).not.toContainText("upstream/");
+
+	await page.getByPlaceholder("Search branches…").fill("upstream/trunk");
+	await expect(page.getByTestId("branch-option")).toHaveCount(1);
+	await upstream.click();
+
+	const workspace = await createWorkspaceViaDialog(page);
+	expect(workspace.baseBranch).toBe("upstream/trunk");
+	expect(gitText(workspace.worktreePath, "rev-parse", "HEAD").trim()).toBe(
+		gitText(repo, "rev-parse", "refs/remotes/upstream/trunk").trim(),
+	);
+});
+
+test("opening New Workspace prefetches a stale default before create", async ({ page }) => {
+	await openAppFresh(page);
+	const { root, repo, origin } = seedRemoteProject("stale-default-prefetch");
+	const oldSha = gitText(repo, "rev-parse", "refs/remotes/origin/main").trim();
+	const writer = join(root, "writer");
+	git(root, "clone", origin, writer);
+	git(writer, "config", "commit.gpgsign", "false");
+	writeFileSync(join(writer, "README.md"), "new\n");
+	gitAs(writer, "add", "README.md");
+	gitAs(writer, "commit", "-m", "new");
+	git(writer, "push", "origin", "main");
+	const newSha = gitText(writer, "rev-parse", "HEAD").trim();
+	expect(newSha).not.toBe(oldSha);
+
+	const dialog = await openPickedProjectWorkspaceDialog(page, repo);
+	await expect(dialog.getByTestId("ws-branch-picker")).toContainText("origin/main");
+	await expect
+		.poll(() => refOid(repo, "refs/remotes/origin/main"), { timeout: 5_000 })
+		.toBe(newSha);
+});
+
+test("opening New Workspace prefetches a missing default tracking ref", async ({ page }) => {
+	await openAppFresh(page);
+	const { repo } = seedRemoteProject("missing-default-prefetch");
+	const expectedSha = gitText(repo, "rev-parse", "HEAD").trim();
+	git(repo, "update-ref", "-d", "refs/remotes/origin/main");
+
+	const dialog = await openPickedProjectWorkspaceDialog(page, repo);
+	await expect(dialog.getByTestId("ws-branch-picker")).toContainText("origin/main");
+	await expect
+		.poll(() => refOid(repo, "refs/remotes/origin/main"), { timeout: 5_000 })
+		.toBe(expectedSha);
+});
+
+async function pastePngInto(page: Page, testId: string, width: number, height: number) {
+	await page.getByTestId(testId).evaluate(
+		async (el, size) => {
+			const canvas = document.createElement("canvas");
+			canvas.width = size.width;
+			canvas.height = size.height;
+			const ctx = canvas.getContext("2d");
+			if (!ctx) throw new Error("no 2d context");
+			ctx.fillStyle = "#3366aa";
+			ctx.fillRect(0, 0, size.width, size.height);
+			const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
+			if (!blob) throw new Error("toBlob failed");
+			const file = new File([blob], "pasted.png", { type: "image/png" });
+			const dt = new DataTransfer();
+			dt.items.add(file);
+			el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
+		},
+		{ width, height },
+	);
+}
+
+test("a pasted image in the workspace dialog rides along into the first chat turn", async ({
+	page,
+}) => {
+	await openFixtureProject(page);
+	await page.getByTestId("add-workspace").first().click();
+	const dialog = page.getByTestId("new-workspace-dialog");
+	await expect(dialog).toBeVisible();
+
+	await dialog.getByTestId("ws-prompt").fill("Look at this");
+	await pastePngInto(page, "ws-prompt", 640, 480);
+	const chip = dialog.getByTestId("composer-image");
+	await expect(chip).toHaveCount(1);
+	await expect(chip).toHaveAttribute("data-width", "640");
+
+	await page.getByTestId("create-workspace").click();
+	await expect(dialog).toBeHidden();
+
+	const userMessage = page.locator('[data-testid="chat-message"][data-role="user"]').first();
+	await expect(userMessage).toBeVisible();
+	await expect(userMessage.getByTestId("chat-message-images")).toBeVisible();
+	await expect(userMessage.getByTestId("chat-attachment-chip")).toHaveCount(1);
+});

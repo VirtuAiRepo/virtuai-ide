@@ -1,0 +1,470 @@
+import type {
+	Ack,
+	AppConfig,
+	ExtUiRequest,
+	HostUpdateNotice,
+	LoginPush,
+	McpStatusPayload,
+	Project,
+	ReviewChangedPayload,
+	ServerWelcome,
+	SessionCreatedPayload,
+	SessionDeletedPayload,
+	SessionEventPayload,
+	SessionStateRecord,
+	TurnChangeSet,
+	Workspace,
+	WorkspaceFsChangedPayload,
+	WorkspaceRemoved,
+	WsParams,
+	WsResult,
+} from "@thinkrail/contracts";
+import {
+	CHANGE_MUTATIONS_PROTOCOL_VERSION,
+	FEEDBACK_SURVEY_PROTOCOL_VERSION,
+	FONTS_PROTOCOL_VERSION,
+	HOST_UPDATE_RUN_PROTOCOL_VERSION,
+	LOCALES_PROTOCOL_VERSION,
+	PI_PACKAGES_PROTOCOL_VERSION,
+	PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION,
+	PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION,
+	REVIEW_RICH_ANCHORS_PROTOCOL_VERSION,
+	SESSION_STATE_PROTOCOL_VERSION,
+	TOOL_RESPONSE_PROTOCOL_VERSION,
+	TURN_CHANGES_PROTOCOL_VERSION,
+	USER_THEMES_PROTOCOL_VERSION,
+	WS_CHANNELS,
+} from "@thinkrail/contracts";
+import { currentLocale } from "@thinkrail/locales/react";
+import { isConnectedGeneration, useAppStore } from "../store";
+import { createPiEventBatcher, shouldFlushPiEventsBefore } from "./piEventBatcher";
+import { WsTransport } from "./transport";
+
+let transport: WsTransport | null = null;
+
+export function supportsHostUpdateRun(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= HOST_UPDATE_RUN_PROTOCOL_VERSION;
+}
+
+export function supportsUserThemes(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= USER_THEMES_PROTOCOL_VERSION;
+}
+
+export function supportsPiPackages(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= PI_PACKAGES_PROTOCOL_VERSION;
+}
+
+export function supportsFonts(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= FONTS_PROTOCOL_VERSION;
+}
+
+export function supportsToolResponses(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= TOOL_RESPONSE_PROTOCOL_VERSION;
+}
+
+export function respondToTool(
+	sessionId: string,
+	toolCallId: string,
+	response: unknown,
+): Promise<void> {
+	const transport = getTransport();
+	const sent = supportsToolResponses(useAppStore.getState().protocolVersion)
+		? transport.request("session.respondToTool", { sessionId, toolCallId, response })
+		: transport.request("session.answerQuestion", { sessionId, toolCallId, result: response });
+	return sent.then(() => undefined);
+}
+
+export function supportsChangeMutations(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= CHANGE_MUTATIONS_PROTOCOL_VERSION;
+}
+
+export function supportsRichAnchors(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= REVIEW_RICH_ANCHORS_PROTOCOL_VERSION;
+}
+
+export function supportsTurnChanges(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= TURN_CHANGES_PROTOCOL_VERSION;
+}
+
+export function runHostUpdate(): Promise<Ack> {
+	return getTransport().request("host.update", {});
+}
+
+/** The agent plan-review capability (`todo.startReview`/`reviewAll` + the hidden review subagent) landed at
+ * v67. An older host serves neither, so the UI must not offer it — see [[submodule-web-transport]]. */
+export function supportsPlanReview(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION;
+}
+
+/** Host-side auto plan-summary drafting (`todo.generateSummary`) landed at v69. An older host serves no
+ * such method, so the client must not issue the request. See [[submodule-web-transport]]. */
+export function supportsPlanSummaryGeneration(protocolVersion: number | null): boolean {
+	return protocolVersion !== null && protocolVersion >= PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION;
+}
+
+interface SessionStateHydration {
+	generation: number;
+	installed: boolean;
+	buffered: SessionStateRecord[];
+}
+
+let sessionStateHydration: SessionStateHydration | null = null;
+const SESSION_STATE_BUFFER_LIMIT = 4_096;
+
+export function mergeSessionStateRecords(
+	snapshot: readonly SessionStateRecord[],
+	buffered: readonly SessionStateRecord[],
+): SessionStateRecord[] {
+	const latestBySession = new Map(snapshot.map((record) => [record.sessionId, record]));
+	for (const record of buffered) latestBySession.set(record.sessionId, record);
+	return [...latestBySession.values()];
+}
+
+function applySessionStateRecord(record: SessionStateRecord): void {
+	const store = useAppStore.getState();
+	store.applySessionState(record);
+	if (record.state.needsInput?.kind === "dialog") {
+		store.applyExtUi(record.state.needsInput.request);
+	}
+}
+
+function hydrateSessionStates(connectionGeneration: number): void {
+	const hydration: SessionStateHydration = {
+		generation: connectionGeneration,
+		installed: false,
+		buffered: [],
+	};
+	sessionStateHydration = hydration;
+	let retryDelay = 500;
+	const attempt = (): void => {
+		void getTransport()
+			.request("session.stateList", {})
+			.then((records) => {
+				const current = useAppStore.getState();
+				if (
+					sessionStateHydration !== hydration ||
+					!isConnectedGeneration(current, connectionGeneration)
+				) {
+					return;
+				}
+				const ordered = mergeSessionStateRecords(records, hydration.buffered);
+				current.installSessionStateSnapshot(ordered);
+				for (const record of ordered) {
+					if (record.state.needsInput?.kind === "dialog") {
+						current.applyExtUi(record.state.needsInput.request);
+					}
+				}
+				hydration.installed = true;
+				hydration.buffered = [];
+			})
+			.catch(() => {
+				const current = useAppStore.getState();
+				if (
+					sessionStateHydration !== hydration ||
+					!isConnectedGeneration(current, connectionGeneration)
+				) {
+					return;
+				}
+				setTimeout(attempt, retryDelay);
+				retryDelay = Math.min(retryDelay * 2, 8_000);
+			});
+	};
+	attempt();
+}
+
+type FolderSnapshotMethod = "locales.list" | "themes.list" | "fonts.list";
+
+function refreshFolderSnapshot<M extends FolderSnapshotMethod>(
+	method: M,
+	params: WsParams<M>,
+	minProtocolVersion: number,
+	install: (store: ReturnType<typeof useAppStore.getState>, snapshot: WsResult<M> | null) => void,
+	connectionGeneration: number,
+): void {
+	const store = useAppStore.getState();
+	if (store.protocolVersion === null || store.protocolVersion < minProtocolVersion) {
+		install(store, null);
+		return;
+	}
+	void getTransport()
+		.request(method, params)
+		.then((snapshot) => {
+			const current = useAppStore.getState();
+			if (isConnectedGeneration(current, connectionGeneration)) install(current, snapshot);
+		})
+		.catch(() => {});
+}
+
+function refreshLocalLocales(connectionGeneration: number): void {
+	refreshFolderSnapshot(
+		"locales.list",
+		{},
+		LOCALES_PROTOCOL_VERSION,
+		(store, snapshot) => store.installLocalLocales(snapshot),
+		connectionGeneration,
+	);
+}
+
+function refreshUserThemes(connectionGeneration: number): void {
+	refreshFolderSnapshot(
+		"themes.list",
+		{},
+		USER_THEMES_PROTOCOL_VERSION,
+		(store, snapshot) => store.installUserThemes(snapshot),
+		connectionGeneration,
+	);
+}
+
+function refreshUserFonts(connectionGeneration: number): void {
+	refreshFolderSnapshot(
+		"fonts.list",
+		{},
+		FONTS_PROTOCOL_VERSION,
+		(store, snapshot) => store.installUserFonts(snapshot),
+		connectionGeneration,
+	);
+}
+
+function refreshLoadedWorkspaceLists(connectionGeneration: number): void {
+	const snapshot = useAppStore.getState();
+	const openProjectIds = new Set(snapshot.projects.map((project) => project.id));
+	for (const projectId of Object.keys(snapshot.workspaces)) {
+		if (!openProjectIds.has(projectId)) continue;
+		void getTransport()
+			.request("workspace.list", { projectId, includeDiffStats: false })
+			.then((workspaces) => {
+				const current = useAppStore.getState();
+				if (!isConnectedGeneration(current, connectionGeneration)) return;
+				if (!current.projects.some((project) => project.id === projectId)) return;
+				for (const workspace of workspaces) current.updateWorkspace(workspace);
+			})
+			.catch(() => {});
+	}
+}
+
+export function initTransport(): WsTransport {
+	if (transport) return transport;
+	const piEvents = createPiEventBatcher((payloads) =>
+		useAppStore.getState().handlePiEvents(payloads),
+	);
+
+	transport = new WsTransport(
+		{
+			onStatus: (status) => {
+				piEvents.flush();
+				useAppStore.getState().setStatus(status);
+			},
+		},
+		{
+			beforeDispatch: (message) => {
+				if (shouldFlushPiEventsBefore(message)) piEvents.flush();
+			},
+		},
+	);
+
+	transport.subscribe(WS_CHANNELS.serverWelcome, (data) => {
+		const welcome = data as Partial<ServerWelcome>;
+		if (typeof welcome.protocolVersion !== "number" || !Array.isArray(welcome.projects)) return;
+		useAppStore.getState().hideSurveyInvitation();
+		useAppStore
+			.getState()
+			.installWelcomeSnapshot(
+				welcome.protocolVersion,
+				welcome.projects,
+				Array.isArray(welcome.recentProjects) ? welcome.recentProjects : welcome.projects,
+				welcome.config,
+				welcome.hostPlatform === "darwin" ||
+					welcome.hostPlatform === "linux" ||
+					welcome.hostPlatform === "win32"
+					? welcome.hostPlatform
+					: undefined,
+				welcome.hostUpdate,
+				typeof welcome.appVersion === "string" ? welcome.appVersion : undefined,
+			);
+		const connectionGeneration = useAppStore.getState().connectionGeneration;
+		refreshLoadedWorkspaceLists(connectionGeneration);
+		refreshLocalLocales(connectionGeneration);
+		refreshUserThemes(connectionGeneration);
+		refreshUserFonts(connectionGeneration);
+		if (welcome.protocolVersion >= SESSION_STATE_PROTOCOL_VERSION) {
+			hydrateSessionStates(connectionGeneration);
+		} else {
+			sessionStateHydration = null;
+			useAppStore.getState().installSessionStateSnapshot([]);
+		}
+		void loadInAppSurvey();
+	});
+
+	transport.subscribe(WS_CHANNELS.hostUpdateAvailable, (data) => {
+		useAppStore.getState().applyHostUpdate(data as HostUpdateNotice);
+	});
+
+	transport.subscribe(WS_CHANNELS.projectUpdated, (data) => {
+		useAppStore.getState().applyProjectUpdated(data as Project);
+	});
+
+	transport.subscribe(WS_CHANNELS.piEvent, (data) => {
+		piEvents.enqueue(data as SessionEventPayload);
+	});
+
+	transport.subscribe(WS_CHANNELS.piExtensionUi, (data) => {
+		useAppStore.getState().applyExtUi(data as ExtUiRequest);
+	});
+
+	transport.subscribe(WS_CHANNELS.sessionCreated, (data) => {
+		const summary = data as SessionCreatedPayload;
+		useAppStore.getState().noteClosedChats(summary.workspaceId, [
+			{
+				sessionId: summary.sessionId,
+				title: summary.title,
+				...(summary.firstPrompt ? { firstPrompt: summary.firstPrompt } : {}),
+				closedAt: summary.updatedAt,
+			},
+		]);
+	});
+
+	transport.subscribe(WS_CHANNELS.sessionDeleted, (data) => {
+		const { workspaceId, sessionId } = data as SessionDeletedPayload;
+		useAppStore.getState().deleteChat(workspaceId, sessionId, false);
+	});
+
+	transport.subscribe(WS_CHANNELS.sessionState, (data) => {
+		const record = data as SessionStateRecord;
+		const hydration = sessionStateHydration;
+		const current = useAppStore.getState();
+		if (hydration && hydration.generation !== current.connectionGeneration) return;
+		if (hydration && !hydration.installed && isConnectedGeneration(current, hydration.generation)) {
+			if (hydration.buffered.length >= SESSION_STATE_BUFFER_LIMIT) {
+				hydrateSessionStates(hydration.generation);
+				sessionStateHydration?.buffered.push(record);
+			} else {
+				hydration.buffered.push(record);
+			}
+			return;
+		}
+		applySessionStateRecord(record);
+	});
+
+	transport.subscribe(WS_CHANNELS.providerLogin, (data) => {
+		const push = data as LoginPush;
+		const state = useAppStore.getState();
+		if (push.target && state.removedWorkspaceIds[push.target.workspaceId]) {
+			void getTransport()
+				.request("provider.loginCancel", { loginId: push.loginId })
+				.catch(() => {});
+			return;
+		}
+		state.applyLoginFrame(push);
+	});
+
+	transport.subscribe(WS_CHANNELS.mcpStatus, (data) => {
+		useAppStore.getState().applyMcpStatus(data as McpStatusPayload);
+	});
+
+	transport.subscribe(WS_CHANNELS.providerChanged, () => {
+		useAppStore.getState().noteProviderChanged();
+		const providerVersion = useAppStore.getState().providerVersion;
+		getTransport()
+			.request("model.list", {})
+			.then((models) => useAppStore.getState().setModelsForProviderVersion(providerVersion, models))
+			.catch(() => {});
+	});
+
+	transport.subscribe(WS_CHANNELS.localesChanged, () => {
+		refreshLocalLocales(useAppStore.getState().connectionGeneration);
+	});
+
+	transport.subscribe(WS_CHANNELS.themesChanged, () => {
+		refreshUserThemes(useAppStore.getState().connectionGeneration);
+	});
+
+	transport.subscribe(WS_CHANNELS.packagesChanged, () => {
+		useAppStore.getState().bumpPackagesVersion();
+	});
+
+	transport.subscribe(WS_CHANNELS.fontsChanged, () => {
+		refreshUserFonts(useAppStore.getState().connectionGeneration);
+	});
+
+	transport.subscribe(WS_CHANNELS.feedbackInterview, () => {
+		const state = useAppStore.getState();
+		if ((state.protocolVersion ?? 0) < FEEDBACK_SURVEY_PROTOCOL_VERSION) return;
+		state.showSurveyInvitation();
+	});
+
+	transport.subscribe(WS_CHANNELS.workspaceCreated, (data) => {
+		const store = useAppStore.getState();
+		store.addWorkspace(data as Workspace);
+		if (
+			store.protocolVersion !== null &&
+			store.protocolVersion >= SESSION_STATE_PROTOCOL_VERSION &&
+			store.status === "connected"
+		) {
+			hydrateSessionStates(store.connectionGeneration);
+		}
+	});
+
+	transport.subscribe(WS_CHANNELS.workspaceUpdated, (data) => {
+		useAppStore.getState().updateWorkspace(data as Workspace);
+	});
+
+	transport.subscribe(WS_CHANNELS.workspaceRemoved, (data) => {
+		const { projectId, id } = data as WorkspaceRemoved;
+		const state = useAppStore.getState();
+		const login = state.activeLogin;
+		state.applyWorkspaceRemoved(projectId, id);
+		if (login?.target?.workspaceId === id) {
+			void getTransport()
+				.request("provider.loginCancel", { loginId: login.loginId })
+				.catch(() => {});
+		}
+	});
+
+	transport.subscribe(WS_CHANNELS.reviewChanged, (data) => {
+		const payload = data as ReviewChangedPayload;
+		useAppStore.getState().applyReviewChanged(payload);
+	});
+
+	transport.subscribe(WS_CHANNELS.workspaceFsChanged, (data) => {
+		useAppStore.getState().noteFsChanged(data as WorkspaceFsChangedPayload);
+	});
+
+	transport.subscribe(WS_CHANNELS.turnChanged, (data) => {
+		useAppStore.getState().applyTurnChanged(data as TurnChangeSet);
+	});
+
+	transport.subscribe(WS_CHANNELS.settingsChanged, (data) => {
+		useAppStore.getState().applyConfig(data as AppConfig);
+	});
+
+	transport.connect();
+	return transport;
+}
+
+export function getTransport(): WsTransport {
+	if (!transport) throw new Error("transport not initialized — call initTransport() first");
+	return transport;
+}
+
+let surveyLoadGeneration = 0;
+
+export function loadInAppSurvey(): Promise<void> {
+	const protocol = useAppStore.getState().protocolVersion;
+	if (protocol === null || protocol < FEEDBACK_SURVEY_PROTOCOL_VERSION) {
+		useAppStore.getState().setInAppSurvey(null);
+		return Promise.resolve();
+	}
+	const generation = ++surveyLoadGeneration;
+	return getTransport()
+		.request("feedback.survey", { language: currentLocale() })
+		.then((result) => {
+			if (generation !== surveyLoadGeneration) return;
+			useAppStore.getState().setInAppSurvey(result.survey);
+		})
+		.catch(() => {});
+}
+
+export function forgetInAppSurvey(): void {
+	surveyLoadGeneration += 1;
+	useAppStore.getState().setInAppSurvey(null);
+}

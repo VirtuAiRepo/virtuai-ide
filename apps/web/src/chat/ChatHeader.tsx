@@ -1,0 +1,39 @@
+import type { SessionStats } from "@thinkrail/contracts";
+import type { ReactNode } from "react";
+import { SessionStatsBar } from "./SessionStatsBar";
+import { SkillsButton } from "./SkillsButton";
+
+export function ChatHeader({
+	stats,
+	statusEntries,
+	resources,
+	onOpenSkills,
+	skillsStale,
+}: {
+	stats: SessionStats | null;
+	statusEntries: [string, string][];
+	resources?: ReactNode;
+	onOpenSkills?: () => void;
+	skillsStale?: boolean;
+}) {
+	return (
+		<div
+			data-testid="chat-toolbar"
+			className="flex h-panel-header-row shrink-0 items-center gap-12 overflow-clip border-border-muted border-b bg-container-workspace-bg px-12"
+		>
+			<div className="min-w-0 flex-1" />
+			<div className="flex min-w-0 items-center justify-end gap-12 overflow-clip">
+				{statusEntries.map(([key, text]) => (
+					<span key={key} className="min-w-0 truncate text-text-muted tr-text-metadata">
+						{text}
+					</span>
+				))}
+				<SessionStatsBar stats={stats} />
+			</div>
+			{resources}
+			{onOpenSkills ? (
+				<SkillsButton onOpen={onOpenSkills} testId="open-skills" stale={skillsStale ?? false} />
+			) : null}
+		</div>
+	);
+}

@@ -1,0 +1,165 @@
+import { describe, expect, test } from "bun:test";
+import { RiBrainLine } from "@remixicon/react";
+import { DEFAULT_MODEL_PROTOCOL_VERSION, LOCALES_PROTOCOL_VERSION, WORKSPACE_SETTLE_PROTOCOL_VERSION } from "@thinkrail/contracts";
+import { t } from "@thinkrail/locales/react";
+import { SettingsSection } from "@/store";
+import {
+	filterSettingsNavGroups,
+	resolveSettingsSection,
+	type SettingsNavGroup,
+	settingsNavGroups,
+} from "./settingsNav";
+
+const LATEST = Math.max(LOCALES_PROTOCOL_VERSION, WORKSPACE_SETTLE_PROTOCOL_VERSION);
+const GATED = [SettingsSection.Language];
+
+const ids = (protocolVersion: number | null, hasUpdates: boolean) =>
+	settingsNavGroups(protocolVersion, hasUpdates).flatMap((g) => g.sections.map((s) => s.id));
+
+describe("settingsNavGroups", () => {
+	test("current hosts with injected updates list every local section in its group", () => {
+		expect(
+			settingsNavGroups(LATEST, true).map((g) => [t(g.label), g.sections.map((s) => s.id)]),
+		).toEqual([
+			[
+				"Interface",
+				[
+					SettingsSection.Chat,
+					SettingsSection.Appearance,
+					SettingsSection.Language,
+					SettingsSection.Layout,
+					SettingsSection.Keyboard,
+					SettingsSection.Terminal,
+				],
+			],
+			[
+				"System",
+				// Workspaces (settle idle) is VirtuAI-hidden — WORKSPACE_SETTLE_OFFERED.
+				[SettingsSection.Notifications, SettingsSection.Privacy, SettingsSection.Updates],
+			],
+		]);
+	});
+
+	test("protocol-gated sections are hidden on old or unnegotiated hosts", () => {
+		for (const version of [1, null]) {
+			const available = ids(version, true);
+			for (const gated of GATED) expect(available).not.toContain(gated);
+			expect(available).toContain(SettingsSection.Appearance);
+			expect(available).not.toContain(SettingsSection.Providers);
+		}
+	});
+
+	test("each gated section appears exactly at its protocol version", () => {
+		// Language still protocol-gates; Workspaces is VirtuAI-hidden entirely.
+		expect(ids(LOCALES_PROTOCOL_VERSION - 1, false)).not.toContain(SettingsSection.Language);
+		expect(ids(LOCALES_PROTOCOL_VERSION, false)).toContain(SettingsSection.Language);
+		expect(ids(WORKSPACE_SETTLE_PROTOCOL_VERSION, false)).not.toContain(
+			SettingsSection.Workspaces,
+		);
+	});
+
+	test("Updates is listed only with injected content", () => {
+		expect(ids(LATEST, false)).not.toContain(SettingsSection.Updates);
+		expect(ids(LATEST, true)).toContain(SettingsSection.Updates);
+	});
+
+	test("agent and provider sections are never listed", () => {
+		const available = ids(LATEST, true);
+		for (const removed of [
+			SettingsSection.Review,
+			SettingsSection.LineWidth,
+			SettingsSection.Feedback,
+			SettingsSection.Providers,
+			SettingsSection.Models,
+			SettingsSection.Mcp,
+			SettingsSection.Templates,
+			SettingsSection.Environment,
+			SettingsSection.Github,
+			SettingsSection.Extensions,
+		]) {
+			expect(available).not.toContain(removed);
+		}
+	});
+
+	test("groups left without an available section disappear", () => {
+		const groups: SettingsNavGroup[] = [
+			{
+				label: "settings.nav.group.agent",
+				sections: [
+					{
+						id: SettingsSection.Models,
+						label: "settings.nav.models",
+						icon: RiBrainLine,
+						requiresProtocolVersion: DEFAULT_MODEL_PROTOCOL_VERSION,
+					},
+					{
+						id: SettingsSection.Updates,
+						label: "settings.nav.updates",
+						icon: RiBrainLine,
+						requiresInjectedContent: true,
+					},
+				],
+			},
+			{
+				label: "settings.nav.group.interface",
+				sections: [{ id: SettingsSection.Chat, label: "settings.nav.chat", icon: RiBrainLine }],
+			},
+		];
+		expect(filterSettingsNavGroups(groups, 1, false).map((g) => g.label)).toEqual([
+			"settings.nav.group.interface",
+		]);
+		expect(filterSettingsNavGroups(groups, 1, true).map((g) => g.label)).toEqual([
+			"settings.nav.group.agent",
+			"settings.nav.group.interface",
+		]);
+		expect(settingsNavGroups(1, false).every((g) => g.sections.length > 0)).toBe(true);
+	});
+});
+
+describe("resolveSettingsSection", () => {
+	test("keeps an available section", () => {
+		const groups = settingsNavGroups(LATEST, true);
+		for (const id of ids(LATEST, true)) expect(resolveSettingsSection(id, groups)).toBe(id);
+	});
+
+	test("Feedback falls back to Appearance", () => {
+		for (const version of [LATEST, 1, null]) {
+			const groups = settingsNavGroups(version, false);
+			expect(resolveSettingsSection(SettingsSection.Feedback, groups)).toBe(
+				SettingsSection.Appearance,
+			);
+		}
+		expect(resolveSettingsSection(SettingsSection.Feedback, [])).toBe(SettingsSection.Appearance);
+	});
+
+	test("unavailable sections fall back to Appearance", () => {
+		const old = settingsNavGroups(1, false);
+		for (const gated of GATED) {
+			expect(resolveSettingsSection(gated, old)).toBe(SettingsSection.Appearance);
+		}
+		expect(resolveSettingsSection(SettingsSection.Updates, settingsNavGroups(LATEST, false))).toBe(
+			SettingsSection.Appearance,
+		);
+	});
+
+	test("removed sections fall back to Appearance", () => {
+		const groups = settingsNavGroups(LATEST, true);
+		expect(resolveSettingsSection(SettingsSection.Review, groups)).toBe(SettingsSection.Appearance);
+		expect(resolveSettingsSection(SettingsSection.LineWidth, groups)).toBe(
+			SettingsSection.Appearance,
+		);
+	});
+
+	test("without Appearance it falls back to the first available section", () => {
+		const groups: SettingsNavGroup[] = [
+			{
+				label: "settings.nav.group.system",
+				sections: settingsNavGroups(LATEST, true)
+					.flatMap((g) => g.sections)
+					.filter((s) => s.id === SettingsSection.Privacy),
+			},
+		];
+		expect(resolveSettingsSection(SettingsSection.Models, groups)).toBe(SettingsSection.Privacy);
+		expect(resolveSettingsSection(SettingsSection.Models, [])).toBe(SettingsSection.Appearance);
+	});
+});

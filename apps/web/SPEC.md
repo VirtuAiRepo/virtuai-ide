@@ -1,0 +1,403 @@
+---
+id: module-web
+type: module-design
+status: active
+title: Web UI client
+parent: architecture
+depends-on: [module-contracts, module-locales, module-ui, module-extension-api, module-ext-visualize, module-resource-renderers]
+tags: [ui]
+---
+
+## Responsibility
+
+The mobile-first React UI. Ships as static assets and dials an engine host over the wire. Renders `pi`'s
+event stream as a chat-centric, multi-session IDE shell.
+
+## Boundary
+
+- **Owns:** the browser UI — client-local navigation and workbench state, transport client, store, panels, the responsive shell, branding tokens.
+- **Public surface:** the built static bundle (`dist/`) — a deployable artifact that dials a host.
+- **Allowed deps:** `@thinkrail/contracts` (types plus its small pure runtime: WS constants, versions,
+  guards, `createQuitConfirmation`; see [[module-contracts]]), `@thinkrail/locales` (UI strings + the
+  shared i18next instance; see [[module-locales]]), `@thinkrail/ui/*`, `@thinkrail/extension-api/web`,
+  and `@thinkrail/ext-*/web`; React / Zustand / Vite / etc.
+- **Deployment obligation:** one built client serves every launcher and future deployment. Endpoint selection
+  belongs to the transport bootstrap; panels, stores, and feature flows never branch on `cli`, `desktop`, or
+  a deployment name.
+- **Forbidden:** importing `server` / `shared` / any `pi` package (value or type). Kept clean by type-only
+  imports + `verbatimModuleSyntax` (a `dist/` build shows no provider SDK / `node:fs`).
+
+## Internal modules
+
+Each is a bounded sub-module; `navigation`/`transport`/`store`/`updates`/`prompt`/`lib`/`extensions`/`search`/`commands` expose an `index.ts` **barrel** (their only public
+surface). `panels`/`chat` are imported **per-file by design** — barreling them would pull
+the lazily-loaded Monaco/shiki/xterm chunks into the eager bundle and break the shadcn per-primitive
+convention; their boundary is held by convention + spec. Sibling edges live here, not in the leaves.
+
+| module | owns | barrel | spec |
+| --- | --- | --- | --- |
+| `navigation` | backend-relative location model + fragment driver/validated restore | yes | [navigation/SPEC.md](src/navigation/SPEC.md) |
+| `transport` | the WS client + its singleton/store wiring | yes | [transport/SPEC.md](src/transport/SPEC.md) |
+| `store` | Zustand: domain projections, one local workbench frame, per-workspace views/attention, chat runtimes | yes | [store/SPEC.md](src/store/SPEC.md) |
+| `panels` | layout-agnostic, store-driven feature views | no | [panels/SPEC.md](src/panels/SPEC.md) |
+| `chat` | pi conversation UI primitives: content-block renderers + the tool-renderer registry | no | [chat/SPEC.md](src/chat/SPEC.md) |
+| `prompt` | lifecycle-neutral slash completion + prompt-template slot editing | yes | [prompt/SPEC.md](src/prompt/SPEC.md) |
+| `auth` | in-app provider login: the presentational OAuth dialog + its client-side state reducer | yes | [auth/SPEC.md](src/auth/SPEC.md) |
+| `shell` | responsive composition + frontend-local workbench ownership (bounded `layout/` and `layoutState/` children) | no | [shell/SPEC.md](src/shell/SPEC.md) |
+| `search` | the global search palette: query grammar, ranking + client-local learning, store-derived work items, double-Shift gesture | yes | [search/SPEC.md](src/search/SPEC.md) |
+| `commands` | the typed contract an invocable app action is described with (visibility, offline gating, display-only shortcuts) | yes | [commands/SPEC.md](src/commands/SPEC.md) |
+| `updates` | optional native/host update shell hook and props-driven controls | yes | [updates/SPEC.md](src/updates/SPEC.md) |
+| `notifications` | out-of-app attention notifications: green-dot observer, queue/window engine, browser Notifications wrapper, permission preface | yes | [notifications/SPEC.md](src/notifications/SPEC.md) |
+| `components` | dependency-light app primitives: error isolation, status icons, custom icons, quiet scroll frames, preloaded split chunks | no | [components/SPEC.md](src/components/SPEC.md) |
+| `extensions` | ordered composition of web extension descriptors into the chat registry | yes | [extensions/SPEC.md](src/extensions/SPEC.md) |
+| `themes` | validated single-file manifests, bundled catalog + atomic token application | yes | [themes/SPEC.md](src/themes/SPEC.md) |
+| `fonts` | the host font settings + custom font files applied as the user-adjustable typography tokens | yes | [fonts/SPEC.md](src/fonts/SPEC.md) |
+| `i18n` | active language: synced preference + browser languages + bundled/local catalogs → the shared i18next instance, `<html lang>`, desktop menu labels | yes | [i18n/SPEC.md](src/i18n/SPEC.md) |
+| `lib` | shared path/array primitives + highlighting | yes | [lib/SPEC.md](src/lib/SPEC.md) |
+
+Leaf utilities without their own spec: `constants/` (branding — the product name, storage/event prefixes, and the one
+`BRAND_MARK_SEGMENTS` monogram regions, joined into the `BRAND_MARK_PATH` the shell logo fills and clipped to by the components' working badge), `clientPreferences.ts` (feature-neutral
+access to the optional native stable string adapter, and `firstPaintPreferenceStorage` — that adapter, else
+`localStorage` — which the theme and font first-paint hints share), and `styles/` — which holds the three
+design-system SOURCES (`typography.json`, `colors.json`, `spacing.json`), their generated CSS, and the
+structural token contract; per-theme palettes belong to `themes`. Each system is specced beside its source:
+[TYPOGRAPHY.md](src/styles/TYPOGRAPHY.md), [COLOR.md](src/styles/COLOR.md) and [SPACING.md](src/styles/SPACING.md);
+the in-app notice and toast look built on them is [NOTIFICATIONS.md](src/styles/NOTIFICATIONS.md).
+Outside `src/`, **[`scripts/`](scripts/SPEC.md)** is the build-time generator module — it runs under Bun,
+never ships, and turns those three JSON sources into `styles/generated/` (plus the vendored provider
+marks into `chat/generated/`).
+`index.html` names the product and links the local, symbol-only SVG favicon derived from the same
+ThinkRail artwork as the shell logo (compact enough for browser-tab sizes and light/dark browser chrome).
+`main.tsx` is the entry/composition root — it synchronously builds the bundled theme catalog, resolves and
+applies the versioned first-paint theme-preference hint (including the current system color scheme) pre-React,
+initializes transport and its client error reporting (window listeners + the error-boundary reporter
+seam), the client-local preference seams (chat presentation, hidden models, project
+expansion) and navigation, then wraps `<Shell />` in
+`components/ErrorBoundary` as the last-resort boundary (a crash escaping every region shows a reload
+screen, not a blank root) plus the app's single `TooltipProvider`.
+
+**React is one exact, matching `react` + `react-dom` pin on a release that carries upstream fix #34803.**
+React 19.2's development Performance Tracks retained every `performance.measure()` record; Pi-rate chat
+renders grew a Vite tab past 10 GB while the JS heap stayed flat, then Chrome killed the renderer and Vite
+reported the dead socket as `EPIPE` / `ECONNRESET` (React #34770). ThinkRail ran a 19.3 canary with React's
+own `clearMeasures` fix until a stable release shipped it, and deliberately carries no second
+measure-reaping policy. The root package-manager overrides resolve both runtime packages through their
+catalog entries, and `check:deps` reads `bun.lock` and rejects any second `react` or `react-dom` version, so
+every React move upgrades both together. Every React move also repeats the mounted-chat measure probe: a
+development build (`NODE_ENV=development vite build --mode development`) streams replayed text deltas
+(`e2e/perf/chatReplay`) into a mounted chat and must keep `performance.getEntriesByType("measure")` flat.
+On 19.2.0 it grew by about 1,500 entries per 12 KB message; on the fixed releases it stays at zero.
+
+**Release source maps are build-only and never shipped.** With `THINKRAIL_SOURCEMAPS_RELEASE` set (a
+credentialed release build, [[module-ci-release]]), `vite.config.ts` emits hidden maps and the
+`sourceMapUpload.ts` plugin runs `posthog-cli sourcemap process --delete-after` on `dist`, failing if
+any `.map` remains; without it the build is unchanged. `posthogCli.ts` is the repo's only way to run
+posthog-cli (the root `posthog-cli` script exposes it to desktop's `preBuild`): it checks the binary against
+pinned SHA-256s before running it ([[module-ci-release]]). The injected chunk-id registry is what
+`transport` reads for UI error reports.
+
+**The React Compiler is on for every `apps/web` bundle** (`vite.config.ts`: `@rolldown/plugin-babel` running
+`@vitejs/plugin-react`'s `reactCompilerPreset()` over dev and build). Three devDependencies live in this
+manifest only, and the `@babel/core` 7.x pin is load-bearing: `babel-plugin-react-compiler` 1.0.0 mis-lowers
+destructuring defaults under Babel 8 and silently drops those functions from compilation. Bailouts never
+fail the build — a function the compiler cannot prove safe is skipped whole, not miscompiled — so check it
+ran: a production build's `dist/assets/*.js` carries `react.memo_cache_sentinel` in the hundreds (React's own
+runtime accounts for three), and CI's `bun run check:compiler` fails when a function's compiled state drifts
+from `scripts/compiler-census.baseline.txt`. `bun test` transpiles without Vite, so only the browser E2E suite exercises
+compiled output.
+
+The shell, the workbench group views, `ChatView`, `Composer` and `useChatScroll` compile because they keep
+these conventions:
+
+- A latest-value ref (`xRef.current = value`) is written in a `useInsertionEffect`, never in render, and
+  render never reads `ref.current`. Insertion effects run for the whole tree before any layout effect, so a
+  child's layout effect that calls back into the parent (`react-resizable-panels`' `onLayout`, Virtuoso's
+  geometry reads in `useChatScroll`) sees the current value. The effect only assigns refs: no state, no DOM.
+- A hook hands refs back beside render values as a tuple (`useElementSize`), or the caller destructures them
+  (`useCollapsibleRegion`, dnd-kit results): reading a render value off an object that carries a ref counts
+  as a ref read.
+- A ref that travels as a prop is named `*Ref` (`selectionEpochRef`) so handlers may mutate it.
+- A closure that reads refs reaches a `useState` initialiser only through a hook
+  (`useReadingBandController`), and render never hands a ref to a plain helper; the helper becomes a hook
+  that owns it (`useSideResizeBinder`).
+- A default parameter never reads a member expression (`caret = text.length`); resolve it in the body.
+- A closure never applies `++`/`--` to a variable it captures; write `attempts += 1`.
+- A component or hook never uses `try/finally` or `throw` inside `try`. Move the body into a local async
+  closure chained as `run().catch(onError).finally(cleanup)`; a synchronous guard moves to a module-level
+  helper (`setLayoutFlagged`). A conditional, logical or optional-chaining value (`a ? b : c`, `a ?? b`,
+  `a?.b`) inside `try/catch` moves above the `try`, or into the closure when its branches await.
+- A `useMemo`/`useCallback` lists every dependency it reads, or the compiler cannot preserve it.
+- A `useMemo` dependency the callback does not read is dropped, so a memo cannot reset on a key it ignores
+  (`useMemo(() => new Map(), [key])` builds one map per mount). Reset through state keyed on the value instead
+  (`ChatView`'s row-height estimate cache).
+- Render never reads a value the compiler cannot see change — `matchMedia`, storage, `Date.now`, a module
+  singleton. It arrives through `useSyncExternalStore` or state: `AppearanceSettings` subscribes with
+  `onSystemAppearanceChange`, and relative-time labels take `now` from `components/useNow`.
+
+Known bailouts include one hot path: `useVirtualRows` runs on every `ChatView` render (each streamed delta).
+Shared hooks and resource surfaces also have bailouts; compilation of the chat/shell hot paths does not imply
+coverage of every file/diff renderer.
+
+- Ref access in render: `useVirtualRows` (reads the visible-anchor ref while adjusting state during render;
+  state would cost a render per scroll), `useWorkspaceRead`, `useBranchStatus`,
+  `useBranchList`, `useTemplateCommandPicker`, `usePendingSelection`, `MonacoEditor`, `AskUserQuestionCard`,
+  `useScrollViewState`, Pierre diff/file's `useThreadAnnotations`, `PierreDiffSurface`, `PierreFileSurface`,
+  image diff's `ImageContent`, `ImageView`, `PdfView`, `usePdfDocument`.
+- Manual memo dependencies cannot be preserved: `CsvDiff`, `JsonDiff`, `NotebookDiffSurface`, `PdfDiff`.
+- Other: `useLiveTabContent` (`??=`), `HistoryOverlay`'s `Highlight` (mutates a closure counter).
+
+A new bailout is a regression unless it joins this list.
+
+**Render cost is measured on a separate profiling build, never the shipped one.** `bun run --cwd apps/web
+build:profile` (`vite build --mode profile`) emits `dist-profile/`: the same compiled production code with
+`react-dom/client` aliased to `react-dom/profiling` and minification off, so component names survive for
+attribution. Source carries no `<Profiler>` wrappers, flags, or collectors: per-component cost is read by a
+harness-installed React DevTools hook (`e2e/perf`, see [[module-browser-e2e]]). Wrappers would need a
+build flag in product code and give area totals only; the hook sees every component with zero source
+change. `dist/` therefore has no profiler timers (`actualStartTime` is absent from `dist/assets`).
+
+### Dependency graph
+
+- `navigation` → `store`, `transport`, `contracts` (type-only); neither dependency imports it, and `main.tsx` initializes the integration
+- `shell` → children `shell/layout` + `shell/layoutState`, `search` + `commands` (`SearchPaletteHost`, `paletteCatalog.ts`, `useSearchPalette`, `chordActions.ts`; `panels` imports neither — the Keyboard settings section is a `search` export shell injects into `SettingsDialog`), `@thinkrail/resource-renderers` (`AppResourceHost` registers the bundled renderers and provides one module-level `ResourceHost` — `chat/Markdown`, a code host over `lib/highlighter` + `themes`, `panels/resourcePane` byte URLs, `panels/openTabs` navigation (`openFileInTab` / `openFileComparisonInTab`), `fs.readFile` + the fs-change subscription, and the session-aware `useFileReview` (as the `FileReview` render-prop) + `SendReviewButton` — plus the line-width preferences through `ResourcePreferencesProvider` and the phone class through `ResourceEnvironmentProvider`; `main.tsx` wraps `Shell` in it), `updates` (one optional-capability hook + props-driven Settings content and durable status affordance), `notifications` (mounts the attention observer + permission preface once), `panels`, `chat` (app-integration render/hydration only), `store`, `transport` (domain hydration + endpoint identity), `contracts` (types + the shared `createQuitConfirmation` rule), `ui`, `components` (`ErrorBoundary` around each mounted region + `QuietScrollArea` around shell-owned tool bodies + `preloadedLazy` for the `ChatView` chunk), `constants`, `lib` (platform shortcut semantics), `themes` (the single owner of catalog/media resolution and atomic theme application, driven by the hydrated store preference or pre-hydration hint), `fonts` (applies the hydrated font settings and installs the custom faces once the host has welcomed it; the pre-hydration hint is applied in `main.tsx`)
+- `shell/layout` → `contracts` (`LayoutPreset` + `GitDiffScope` types only), `lib` (attention/id primitives), `ui` (including `@thinkrail/ui/resizable`), and React / `@dnd-kit/core`; `shell/layoutState` → `shell/layout`, `store`, `transport` (browser endpoint identity + error normalization), `clientPreferences` (native-stable persistence), `contracts` (`LayoutPreset` type only), `lib`, and React. The parent injects store state and feature renderers, so the pure layout child has no feature-module runtime edge
+- `updates` → `contracts` (native bridge + host notice types), `store` (host notice, toasts), `ui`, React, and Remix Icon; native snapshots remain shell-local
+- `search` → `commands` (the command contract its rows render), `store` (work-item reads — the session snapshot, chat titles, attention — and the `doubleShiftSearch` preference), `transport` (the backend endpoint that qualifies browser preference keys), `contracts` (the shared tiered matcher + domain types), `clientPreferences` (native-stable learning/preview/double-Shift persistence), `constants`, `components` (`AttentionDot`, `RunningIcon`), `lib`, `ui`, React, Remix Icon. It never imports `panels`, `chat` or `shell`: the command catalog and its handlers are composed in `shell` and injected as props
+- `commands` → `lib` (platform shortcut glyphs), `@thinkrail/locales` (group-label keys, type-only), Remix Icon types. It owns no handlers and binds no keys; `shell` supplies both
+- `notifications` → `store` (session-state reads, prompt + `activateWorkspaceFromRoute` / `openSearch` actions), `ui` (the permission preface dialog), `contracts` (type-only — `SessionState`/`SessionCompletion`/`NativeNotificationBridge`), React, and Remix Icon; the master-toggle Settings panel lives in `panels`, and `shell` mounts the observer/preface. It emits through a capability-selected channel: the page Notifications API, or the native desktop channel when the optional `__THINKRAIL_NATIVE_NOTIFICATIONS__` bridge is present (capability detection only, no `desktop` branch). No Service Worker: a closed app has no live client to notify
+- `panels` → `@thinkrail/resource-renderers` (registry, review contract, `ReviewThreadCard`, draft context, `createAskAgentRequest`), `store`, `transport`, `ui`, `components` (`ErrorBoundary` for feature bodies + quiet scroll surfaces for panel-owned lists/xterm), `lib`, `contracts`, `constants` (`WelcomePanel`'s wordmark), `prompt` (`NewWorkspaceDialog` consumes the shared slash/template behavior), `chat` (`NewWorkspaceDialog` eagerly reuses `chat/ModelEffortPicker`+`useModelCatalog`+`useModelPreferences`, `ModelsSettings` the older `ModelSelector`+`ThinkingSelector`, `VisibleModelsSettings` `chat/modelPicker`'s `formatContext` + `chat/ProviderGlyph`, and `ProvidersSettings` the `chat/modelPicker` connection-kind vocabulary, `useProviderAuth` the sign-in `chat/ExtraUsageNotice` — all shiki-free, so the eager import stays split-safe; `TemplatesSettings` reuses `chat/TemplateEditorDialog` for its New/Edit flows — see `panels/SPEC.md`'s `TemplatesSettings` paragraph; `ProjectTrustNotice` and `NewWorkspaceDialog` share `chat/projectTrust` + `chat/useProjectTrustSummary` with the Skills dialog's trust banner), `auth` (`useProviderAuth` — shared by `ProvidersSettings`, `ConnectProviderDialog` and the onboarding wizard — and `McpSettings` mount `auth/LoginDialog`), `notifications` (`NotificationsSettings` requests browser permission on enable via the barrel), `themes` (`AppearanceSettings` consumes the live catalog; code surfaces consume generic theme variables/syntax mapping), `fonts` (`AppearanceSettings`' font groups read the bundled faces, per-device probes and the weight preview; `TerminalInstance` follows the code font through `@thinkrail/ui/fonts`), `i18n` (`LanguageSettings` renders its language derivations and `useSystemLanguages`), and `react-virtuoso` (the lazily loaded Changes review list); the renderer engines are [[module-resource-renderers]]' own dependencies
+- `chat` → `contracts` (pi message types, **type-only**), `ui`, `extension-api/web`, `@thinkrail/resource-renderers` (`ChatTranscript` provides the chat's `ResourceScope` to its rows), `ext-visualize/web`, `extensions` (registration only), `components` (`useNow`, and the `RunningIcon` badge in the stream footer), `prompt` (shared slash/template behavior), `lib`, `clientPreferences`; `store` + `transport`  (**app-integration files only** — the renderers stay store-free; see `chat/SPEC.md` for the current set)
+- `prompt` → `contracts` (slash/template types only), `@thinkrail/ui/utils` (`cn`), `@thinkrail/ui/button` (the template slot hint is a shared `Button`), and React; it has no lifecycle integration dependency
+- `extensions` → `ext-*/web`, `extension-api/web`, `chat/toolRegistry` (registration only; no ChatView import)
+- `auth` → `ui`, `lib` (`copyText`; the dialog is store/transport-free — the panel integrates it; the state types need no imports)
+- `store` → `transport` (**type-only** — `ConnectionStatus`), `chat` (**type-only** — `ChatTurn`/`ToolResultState`), `auth` (**type-only** — `LoginState`; the `foldLoginFrame` reducer lives in `store`, like `reduceExtUi`), `contracts` (domain + custom-preset types, never current-layout DTOs), `lib` (shared path/array primitives — a leaf, so no cycle), and `shell/layout` (**type-only** for web-local frame/view state)
+- `transport` → `contracts`, `store` (welcome routing; the `store → transport` back-edge is type-only, so
+  the runtime graph is acyclic), `lib` (plain-HTTP-safe random page identity)
+- `components` → `lib` (`ErrorBoundary`'s `shallowEqualArrays` for its reset keys) and `constants` (`RunningIcon` draws the shared brand monogram) — both leaves, so any region can still wrap in it; presentational controls consume `ui`
+- `lib` → `themes` (the lazy highlighter uses the one generic CSS-variable Shiki registration), React (the phone-viewport hook only), and `contracts` (types only, e.g. the MCP state vocabulary's `McpServerState`)
+- `themes` → `constants` (the branding storage prefix scopes the first-paint hint and the user-theme cache), `clientPreferences` (native-stable hint storage); `transport` hydrates the store's user-theme snapshot and `shell`'s theme effect installs it
+- `fonts` → `contracts`, `constants` (the first-paint hint key), `clientPreferences` (native-stable hint storage and the desktop signal); `transport` hydrates the store's custom-font snapshot, `shell`'s fonts effect applies the settings and installs the faces, `main.tsx` applies the hint before React, and `panels` (the Appearance font groups) reads its bundled faces, probes and weight preview
+- `i18n` → `store`, `contracts` (types), `@thinkrail/locales`; `transport` hydrates the store's local-language snapshot, `main.tsx`'s `App` mounts `useLocaleSync` once and `panels` renders the Language page from its pure derivations
+- **Any module may → `@thinkrail/locales/react`** (`useT`, `<T>`, `currentLocale`) for its UI text — the one cross-cutting edge besides `lib`; user-facing text is never a literal ([[architecture]] Decision 23)
+- leaves (`clientPreferences`, `constants`, `utils`, `styles`) → none internal
+
+Rules: a panel never imports another panel sideways; nothing imports `shell` (it's the composition root).
+
+The renderer engines (`@pierre/diffs`, `jsondiffpatch`, `pdfjs-dist`, `@shikijs/monaco`, `monaco-editor`) are
+[[module-resource-renderers]]' dependencies; the app keeps `react-virtuoso` for its own panes
+(catalog-pinned, shared with the package). The chunking contract still holds for the app build. `pdfjs-dist` and its `pdf.worker.min.mjs` worker URL are reached only from
+the lazy PDF renderer chunks; neither belongs in the entry graph. Pierre, its Shiki
+language/theme graph and worker entry, plus Monaco, its curated Shiki grammars and adapter, remain behind
+resource-loader dynamic imports. Only lazy Pierre renderer modules mount the provider, and every mounted
+surface acquires Pierre's module-singleton worker pool; an ordinary workspace therefore neither loads Pierre
+nor initializes its pool. Renderer metadata and loaders are the only eager edge. A production build must
+retain distinct Pierre diff, Pierre file, worker-pool, and Monaco chunks, with none of their implementation
+code in the entry chunk. Monaco stays out of the entry graph but is not loaded only on demand: on desktop,
+`shell` preloads the code view once per page at idle after the workbench mounts, once the page is visible
+and online, and Files rows warm it on focus and after a 150 ms hover. Only renderers that opt in with
+`capabilities.preload` (the code view) load early, so hovering a PDF or notebook row loads nothing.
+Phone-class viewports and `saveData` connections never preload.
+Vite emits every worker as an ES module (`worker.format: "es"`), so worker `import()` calls split into
+on-demand chunks instead of inlining; every target webview (Chromium, WebKit/Safari 17+, WebView2) runs
+module workers. Safari/WebKit 17 is the browser floor: the shipped webviews (macOS 12+ system WebKit,
+Ubuntu 24.04 WebKitGTK, WebView2) all meet it, so web code may use baseline-17 APIs such as
+`URL.canParse`.
+
+The module set: `transport` / `store` / branded `shell` + its headless `shell/layout` child;
+layout-agnostic Project/File/Specs/Changes/Review renderers; registry-dispatched resource bodies and lazy xterm terminal
+bodies; the shared `prompt` behavior module; and the `chat` module (`ChatView`, content-block renderers, tool registry, and full Composer). The
+workbench owns center and left/right/bottom auxiliary strips/groups around those bodies, never the panels
+themselves.
+
+## Styling & theming
+
+- **Tailwind v4 utilities, mapped to the design tokens** (`src/index.css` `@theme inline`). Components
+  use utilities for colour, spacing, borders and layout (`bg-container-header-bg`, `text-primary`,
+  `border-border-default`,
+  `px-12`) and a **generated semantic typography class** for type (`tr-text-ui`, `tr-title-dialog`,
+  `tr-code-text`, …) — **never inline `style` objects except renderer-measured geometry, and never raw
+  hex.** The bounded geometry exception covers values such as intrinsic media bounds, normalized overlays,
+  zoom, swipe position, portal placement, and virtual-list geometry (a loading section's reserved height,
+  a measured tail spacer); colour, spacing, and control skin remain token utilities.
+  Responsive (`md:` …) and states (`hover:` / `focus-visible:`) come from Tailwind (inline styles can't
+  express them, and the responsive shell needs them).
+- **Chrome geometry lives in `index.css`, host geometry arrives as CSS custom properties.** Beside the
+  generated colour/spacing layers, `index.css` maps the shell's structural rows (`--spacing-panel-header-row`,
+  `--spacing-topbar-row` from `tokens.css`) and the two host-published window-chrome insets
+  (`--spacing-window-chrome-inset-left|right: var(--window-chrome-inset-*, 0px)`), while the host also
+  publishes `--window-chrome-drag-region`. It declares the only two non-typographic handwritten utilities,
+  `window-drag` / `window-no-drag` (`-webkit-app-region` + `app-region`); `window-drag` is inert unless the
+  host opts in. A host that removed its own caption buttons additionally installs the type-only
+  `NativeWindowControlsBridge` from `contracts`, which the shell turns into HTML window controls. A native host may set these properties on `<html>`; the app never detects the host, it reads
+  the properties with their `0px` fallbacks ([[submodule-web-shell]] owns the consumer, [[module-desktop]]
+  the publisher).
+- **The colour and type systems are this app's, not the monorepo's.** `apps/website` keeps its own
+  hardcoded stylesheet on purpose — a static page with no theming has no use for a token layer, and
+  reaching across apps would couple them for nothing.
+- **A colour utility names a semantic role, never a palette entry** — `bg-container-elevated-bg`, not
+  `bg-[var(--elevated)]`; and a tint is a token on the four-step alpha scale, not a `/40` modifier.
+  `src/styles/COLOR.md` is the system; `src/styles/colorUsage.test.ts` is the adoption guard (Tailwind
+  drops an unknown utility silently, so an unpublished token renders as nothing at all).
+- **Ordinary radius and rhythm-spacing values come from their scales, never raw pixel lengths** — `rounded-md`
+  and `p-8` / `gap-12`, not `rounded-[7px]` or `py-[3px]`. Radius is the project t-shirt family
+  (`--radius-xs/sm/md/lg` — a small primitive geometry capped at 8px: `sm` (4px) is the default corner,
+  `md` (6px) the outer corner for surfaces nesting 4px children, `lg` (8px) the exception for large
+  standalone elevated surfaces (dialogs, user-message bubbles)). Spacing is **one canonical numeric
+  scale** — `0 / 2 / 4 / 6 / 8 / 12 / 16 / 24 / 32 / 40 / 64` — where the step name *is* its pixel value, so
+  `p-8` / `gap-12` / `py-4` resolve to exactly that many pixels; it is generated from a single JSON source
+  (`src/styles/spacing.json` → `src/styles/generated/spacing.css`), so each canonical length is written
+  once in the JSON rather than re-declared at call sites. A value several surfaces must move together is a
+  named **layout role** aliasing a step (`p-panel-inset`, `h-panel-row`), never a repeated literal.
+  `src/styles/SPACING.md` (`web-spacing`) is the authoritative system; `src/styles/spacingUsage.test.ts`
+  is that adoption guard, and it exists because this class of drift is **invisible**: unlike a colour
+  utility, an arbitrary length always renders, so an off-scale value looks correct in review and passes
+  every other gate. Lengths that are not scale steps at all — `max-w-[78ch]`, `w-[320px]`,
+  `max-h-[40vh]`, a measured `pl-[calc(…)]` indent — stay allowed; they are layout constraints, not rhythm.
+- **Icons are `@remixicon/react` (Remix Icon) glyphs sized by UI *context*, not location, on the
+  Tailwind `size-*` scale** — imported by name, no `<Icon>` wrapper and no `size=` prop, and never a
+  container added just to resize a glyph. Remix glyphs are `fill="currentColor"`, so the semantic
+  `text-*` utilities colour them. **Style is state-driven: the `Line` (outline) variant is the
+  default; the `Fill` (solid) variant marks the *active/selected* item** — the selected project &
+  active workspace rows (`ProjectTree`), the active/main-spec node (`SpecsPanel`), the active file/dir
+  row (`TreeRow`) and the active editor tab (`Workbench`) swap to `Ri…Fill`; everything else (buttons,
+  chevrons, status, composer, chat, menus) stays `Ri…Line`. Icons with no Line/Fill pair
+  (`RiParagraph`/`RiDraggable`/`RiLinkM`/`RiListCheck3`) render their single style in both states.
+  **Project-custom glyphs** that Remix lacks live as SVGs in `public/custom-icons/` and render through
+  the `CustomIcon` primitive (`components/CustomIcon`) — a `currentColor` CSS `mask-image` span, so they
+  theme and swap Line/Fill by state exactly like Remix glyphs. The **Changes** tool uses the custom
+  `file-diff` glyph; **Review** uses `RiDiscussLine`/`RiDiscussFill`.
+  Three tiers: `size-12` (12px) for **chat-content** indicators (tool activity, plan/todo status,
+  expand/collapse chat details — subordinate to chat text); `size-14` (14px) for **compact interface /
+  navigation chrome** (left/right panels, panel & toolbar headers, tabs, the mobile switcher rail, menu
+  items); `size-16` (16px) for **every disclosure/expand chevron** (`ChevronDown/Right/Left/Up`), which
+  are `size-16` in all contexts regardless of tier — except a chevron inside a button. **Icons inside
+  buttons are not tiered by context**: `Button` / `IconButton` (`@thinkrail/ui/button`) size their icon,
+  chevrons included, from the button size (S 14, M 16, L 20) and the call site passes the icon component,
+  never a `size-*` class. The **icon↔text gap is `gap-4` (4px)** across all icon+label rows (nav
+  rows, menu/command items, tabs). A **two-line** row (e.g. a
+  workspace whose branch differs from its name) **top-aligns** the icon to the first line (`items-start`
+  + `mt-2`) so the glyph hangs on its title, while a single-line row stays vertically centred
+  (`items-center`, no nudge). Menu-item icons are centralized once in `packages/ui/menu-styles.ts` (`menuItemClass`
+  `[&_svg]:size-14` + `gap-4`).
+- **`src/themes` is the theme contract and catalog; `src/styles/tokens.css` is structural.** A bundled
+  theme is one strict, complete `*.theme.json` manifest: appearance/contrast metadata + semantic UI
+  colors + all 16 ANSI colors + a semantic syntax palette. Selected-text foreground overrides are the
+  only nullable color slots (`null` retains the consumer default). A build-time glob validates the set at
+  bootstrap (our files — a bad one fails loudly), so adding a theme changes only that file — never
+  contracts, a label map, CSS selectors, editor imports, tests, or specs — and appears after a rebuild.
+  A user adds a theme the same way at runtime: the same manifest in `~/.thinkrail/themes`, served by
+  [[submodule-server-themes]] and validated here, where an unusable file is reported, not fatal.
+  Manifests are self-contained (no inheritance), contain canonical color data only, and cannot alter
+  layout/type/motion or inject CSS/code. The engine derives repetitive tints/effects and atomically
+  writes the mapped custom properties before changing `[data-theme]`; `@theme inline` keeps every utility
+  pointed at the live variables, so components remain unchanged. `tokens.css` retains the spacing basis,
+  radii, motion and generic derived formulas — **no typography at all** (not a value and not an alias onto
+  one; the `--font` / `--font-mono` / `--font-accent` / `--font-mono-size` / `--line-height` aliases are
+  gone, because a second name for a value is what drifts) and no named theme blocks.
+- The theme preference is **server-synced**: `AppConfig.theme` remains the host-owned opaque fixed choice,
+  while closed `themeMode` and optional opaque `systemThemePair` opt into per-client system matching. Each
+  client resolves the pair against its own `prefers-color-scheme`; operating-system changes are local DOM
+  effects and never config writes, so two clients may simultaneously render different appearances. Fixed
+  Dark remains the default for both new and legacy config. `settings.update` converges through
+  `settings.changed`; a theme-only legacy mutation exits system mode. An unavailable system slot falls back
+  deterministically within the required appearance without destructively rewriting the requested value.
+  The versioned pre-React hint caches the preference, not the last effective id, using the injected stable
+  native preference adapter when present and localStorage otherwise. Themes ship with the app: one is added
+  only via a source PR, and runtime registration/extension loading is deliberately not designed.
+- **Every code surface is catalog-agnostic.** xterm and Monaco rebuild from generic variables after the
+  atomic `[data-theme]` signal, including an optional selected-text foreground. Monaco chooses
+  `vs`/`vs-dark` or the corresponding high-contrast base from manifest appearance/contrast metadata,
+  never a theme id. Shiki uses one code-owned semantic CSS-variable TextMate map: chat consumes its live
+  references, while Monaco resolves that same map to hex for `@shikijs/monaco`; Pierre's separate
+  `thinkrail` registration also emits live variable references. None needs a per-theme import or selector,
+  and only strict Monaco re-resolves after a swap. Pierre's own inherited diff variables carry semantic feedback
+  and canvas colours into its Shadow DOM. Mermaid re-derives from the same variables. Reads for
+  strict consumers still pass through `lib.cssColorToHex`. Data-driven tests enforce the existing
+  contrast floor (body/muted ≥ 4.5:1 and hint ≥ 3:1 on the primary declared surfaces) for every discovered
+  manifest.
+- Radius tokens **are** Tailwind's radius namespace: `tokens.css` declares `--radius-xs/sm/md/lg` in an
+  `@theme static` block that first resets Tailwind's default scale (`--radius-*: initial`). So
+  `rounded-<step>` and its side variants resolve to the live tokens, an undeclared step such as
+  `rounded-xl` is never generated, and `static` keeps every variable emitted for hand-written CSS. This
+  replaces the earlier rule of spelling the colliding tokens as arbitrary values
+  (`rounded-[var(--radius-md)]`): the collision is removed at its source instead of worked around at ~300
+  call sites, and the guard rejects any arbitrary radius value.
+- **Typography comes from `styles/typography.json` via generated semantic classes — nothing else.**
+  `styles/generated/typography.css` (committed, regenerated by `bun run typography:generate`, drift-gated
+  by `typography:check`) emits the primitive `--tr-*` custom properties, the `<body>` base, and one class
+  per semantic style: `tr-brand-*`, `tr-heading-*`, `tr-title-*`, `tr-text-*`, `tr-code-*` plus one
+  `tr-prose-<surface>` system per markdown surface (`tr-prose-chat`, `tr-prose-doc` — same element set,
+  different scale, because a chat bubble and a rendered document need different heading ladders). A call
+  site names exactly one class and adds its own **colour**; `italic` and `leading-*` are the only Tailwind
+  utilities that may override a semantic style (the classes are emitted in `@layer components`, so a
+  utility wins the single property it names, while the `<body>` base in `@layer base` loses to all of them).
+- **Handwritten typography utilities must not be introduced.** No new `@utility` rule may set
+  `font-family`, `font-size`, `font-weight`, `line-height`, `letter-spacing` or `text-transform`, and no
+  component may compose them — add a semantic style to `typography.json` instead. The former
+  `text-mono` / `text-base-mono` / `text-brand` / `text-eyebrow` utilities and the
+  `--text-xs|sm|base|md|lg` mappings are all gone; a generated class replaces each. `index.css` maps
+  exactly two typography names — `--font-sans` / `--font-mono`, so Tailwind's *preflight* defaults for
+  `html` and `code`/`pre` come from the JSON too; the `font-sans` / `font-mono` utilities that enables are
+  banned at call sites. `styles/typographyUsage.test.ts` enforces all of it, including that a `tr-`
+  class a component names is one the generator actually emits (an unknown class is dropped silently by
+  Tailwind, so the element renders unstyled while the class list claims otherwise).
+- **A primitive font family may only be named for a documented third-party integration.** Monaco
+  (`resource-renderers/support/monacoSetup.ts`) reads the code family, the dense code size, and the default line-height; Pierre receives the
+  same tokens through the `.pierre-code-surface` custom-property bridge in `index.css`; xterm
+  (`panels/TerminalInstance.tsx`) reads the code family + the code size and owns its row height — both resolve the generated `.tr-code-editor` / `.tr-code-block` styles through `@thinkrail/ui/fonts`'s `resolveFont` and re-read them on `onFontsChange`; mermaid
+  (`thinkrail-extensions/visualize/web/mermaid.ts`) reads the code family. These third-party integrations are the exhaustive
+  allowlist in `styles/typographyUsage.test.ts`. Everywhere else a class is required, and
+  `<pre>` / `<code>` must carry one even inside a container that has one: preflight targets those elements
+  directly, and a directly-matching rule beats an inherited family. Note that the bare arbitrary value
+  `font-[var(--font-mono)]` is ambiguous — Tailwind compiles it to an invalid `font-weight`, so it
+  silently does nothing; the working form is `font-(family-name:--font-mono)`
+  (`styles/fontClasses.test.ts` fails on the bare form).
+- **Fonts ship inside the artifact.** `styles/generated/fonts.css` imports self-hosted variable faces
+  (fontsource; Geist Variable + JetBrains Mono Variable, both with real italics — shared with
+  `apps/website`, so their versions live in the root `workspaces.catalog`). Which packages those are is
+  declared per family as `selfHosted` in `styles/typography.json`, so the stack and the bundled faces
+  cannot drift; the imports are generated from it. Vite emits the woff2 files
+  into `dist/assets`, and `apps/cli` embeds them. No font CDN — the host is local and often
+  offline, and an external `<link>` also put first paint behind a third party and contacted it on every
+  load despite the analytics opt-out. `e2e/fonts.spec.ts` pins both halves (no CDN request; the real
+  faces present).
+  A user's own font files follow the same rule from the other side: the host serves them from
+  `<dataDir>/fonts` on its `/fonts/` route ([[submodule-server-fonts]]), and [[submodule-web-fonts]]
+  registers them as `FontFace`s — never a URL outside the host.
+- **The typography system — `typography.json` as the single source of truth, the primitives and the
+  semantic styles generated from them, the `<body>` base, the 370/400/500/600/800 weight policy,
+  code-only mono, the two prose systems, and how to add or change a style — is specced in
+  [src/styles/TYPOGRAPHY.md](src/styles/TYPOGRAPHY.md)** (`web-typography`); check changes against it. The
+  generator that turns it into CSS is [scripts/SPEC.md](scripts/SPEC.md).
+- **Icons: `@remixicon/react` (Line default, Fill when active/selected). Components: shadcn/ui** (Radix primitives), owned by [[module-ui]]
+  and themed with our token utilities (`cn()` in `@thinkrail/ui/utils`) — never shadcn's default oklch
+  palette. Use these for accessible menus / dialogs / tooltips. **Every ordinary action button is
+  `Button` or `IconButton`** — five variants × three sizes, states owned by the component (see
+  [[module-ui]] "Button system"); call sites add placement only, and `styles/buttonUsage.test.ts` rejects
+  legacy variant names, call-site skins and raw `<button>` skins. Icon-only controls get their name and the
+  shared `IconTooltip` from `IconButton`'s required `label`; neither component takes a native `title` —
+  an explanation, including why a button is disabled, is its `tooltip`.
+
+## Get right
+
+- **`apps/web` depends on `contracts`, `ui`, `extension-api/web`, and `thinkrail-extensions/*/web` only.** Never value-import `pi`; never import `server`/`shared`.
+- Streaming invariant: `text_delta` / `thinking_delta` **APPEND**; `tool_execution_update.partialResult`
+  **REPLACE**. Attempt-level `agent_end` never means idle; automatic work ends only at `agent_settled`.
+- Panels stay arrangement-agnostic so the mobile shell is an additive layer, not a rewrite.
+- **Every host HTTP route the app composes is proxied by the Vite dev server.** The app reaches the host
+  over `/ws`, over the two byte routes `/files` and `/blob` (images, PDFs, notebooks, markdown-relative
+  images), always composed through one function (`panels/resourcePane.resourceBytesUrl`), and over
+  `/fonts/` (custom font files and uploads, composed by `transport/fonts.ts`), all on the transport's HTTP
+  origin. Under `bun run dev` that origin is Vite, and a route Vite does not proxy answers the SPA
+  `index.html` with status 200 — an `<img>` shows nothing and a PDF fetch "succeeds" with HTML, while the
+  host-served build and the e2e suite stay green. `vite.config.ts` therefore proxies `/files`, `/blob` and
+  `/fonts` beside `/ws`, and `devProxy.test.ts` pins the list to the composers' constants.
+- **`typecheck` runs two projects.** `tsconfig.json` checks the browser app with DOM types only;
+  `tsconfig.test.json` checks tests, `scripts/`, and `vite.config.ts` with Bun types. Every
+  test file is checked; the test project has no exclude list. A test never shares its base name with a
+  sibling of the other extension (`x.test.ts` beside `x.test.tsx`): `tsc` keeps only the `.ts` one.
+
+## Later
+
+The mobile single-view shell and PWA packaging (installable, offline shell) ride on this split without
+touching panels or store.

@@ -1,0 +1,434 @@
+---
+id: module-website
+type: module-design
+status: active
+title: Project website (thinkrail.ai)
+parent: architecture
+tags: [website, marketing]
+depends-on: [module-website-analytics]
+references: [module-ci-release]
+---
+
+## Responsibility
+
+The project's public website at `thinkrail.ai`: the IDE-shell landing, its blog, and the audience-specific
+vibecoding experience at `/vibecoding/` (also served, with per-route hero titles and copy variants
+and a canonical back to `/vibecoding/`, at `/agentic-development/` and `/agentic-ide/`). The landing and blog's creative conceit is that **the site IS
+the IDE**: a faithful HTML/CSS recreation of the ThinkRail shell (title bar, project rail, tab strip,
+files rail, terminal, status bar) whose center "editor" is the normally-scrolling page content. Each
+landing section poses as a file of a `website` workspace (`README.md`, `why.md`, `features/*.md`,
+`INSTALL.md`, `CONTRIBUTING.md`). The **file tree is the source of truth for the page's navigation
+structure**, and its selection reacts to scroll (scroll-spy) like the editor is switching files. The
+top editor **tab strip is derived from that file-tree navigation** — not a hand-maintained list — and
+is interactive: the active tab **follows the currently visible section via the same scroll-spy**, and
+**clicking a tab scrolls to its section**. The strip holds **exactly one navigational tab per unique
+section target**: the tree may stay hierarchical and repeat a target across rows, but duplicate
+targets collapse to a single tab, so scroll-spy always activates exactly one tab per section. The
+strip **scrolls** (`overflow-x: auto`, scrollbar hidden) — the tabs overflow below ~1500px and every one
+must stay reachable. Its bottom divider is drawn **per tab**, not on the strip: a strip border sits
+outside the scrollport, where the active tab cannot paint over it to merge into the content. The
+status bar is a plain copyright footer, not a live line counter.
+
+`/vibecoding/` deliberately uses a separate visual grammar: [[submodule-website-vibecoding]] owns the
+animated product story and install experience as a route-local React island with route-local Tailwind.
+It shares the website origin, artifact, analytics initializer, SEO outputs, and deployment—not the
+IDE-shell presentation.
+
+Not part of the product: nothing in the app depends on the public website, and it never ships in the
+binary.
+
+## Boundary
+
+- **Independently deployed leaf.** Its only workspace dependency is [[module-website-analytics]]; it
+  must never import contracts, server, shared, or web. It never joins the product host wire;
+  [[submodule-website-attribution]] alone owns an independent, bounded HTTP claim protocol and D1 state.
+- **One static Astro artifact plus same-project claim functions, with a route-local framework exception.**
+  The landing and blog retain vanilla TypeScript + hand-written CSS: no React island and no Tailwind
+  stylesheet or runtime reaches those routes. [[submodule-website-attribution]] alone adds Pages Functions
+  and D1; only `/vibecoding/`, `/agentic-development/`, and `/agentic-ide/` may use the shared React
+  island and Tailwind v4. Astro's React integration and Tailwind Vite plugin are build-wide tooling; build validation
+  requires one island in each allowed route output and rejects islands in the fixed landing, blog,
+  article, and claim outputs. The browser analytics
+  workspace module is compiled into the static output. The `@fontsource-variable/*` packages are
+  build-time asset sources whose woff2 files are emitted into `dist/`. Shared with `apps/web`, they
+  come from the root `workspaces.catalog` — one pin for both apps that keeps the site's faces
+  identical to the app's.
+  - *Why Astro (decision, 2026-08):* the blog + planned docs fired the "bespoke SSG" tripwires
+    (RSS, OG, typed frontmatter, content DX). Astro is Vite underneath — the landing page ported
+    verbatim, `bun test` suites unchanged — and React 19 islands are available only where a route needs
+    one. Rejected: Next.js static export (ships the React runtime to static pages, non-Vite culture),
+    VitePress (Vue), Eleventy (docs features assemble-yourself — the bespoke trap again), Hugo/Zola
+    (non-TS toolchain, token/tests integration lost). The prior bespoke pipeline
+    (`scripts/build-blog.ts` + HTML string templates) is deleted.
+  - *Lint caveat:* Biome parses only `.astro` frontmatter, so `noUnusedVariables`/`noUnusedImports`
+    are disabled for `*.astro` in `biome.json` (template usage is invisible to it — every flag would
+    be a false positive). `astro check` covers the templates instead.
+  - *Test typecheck:* `astro check` follows `tsconfig.json`, which excludes `*.test.ts`. The
+    `typecheck` script, not `build`, also runs `tsconfig.test.json` over the site tests, so root CI
+    checks them and `site.yml` does not.
+
+The parent owns the route-composition edges; the vibecoding leaf has no sibling dependency:
+
+```text
+src/pages/{vibecoding,agentic-development,agentic-ide}/index.astro ──▶ src/vibecoding (through index.ts)
+src/pages/{vibecoding,agentic-development,agentic-ide}/index.astro ──▶ src/components/Analytics.astro
+landing + blog shells                                              ──▶ src/components/Analytics.astro
+src/main.ts, src/vibecoding                                        ──▶ src/installLinkShare.ts
+```
+
+`src/installLinkShare.ts` is the one framework-free phone "send link" helper both route families use: phone/tablet
+detection (Android, iPhone/iPad/iPod, or a touch Mac), the share URL, and native-share-then-clipboard delivery. It
+imports nothing, so the vibecoding island can reuse it without reaching the IDE shell.
+
+- **Fonts are self-hosted; the site makes no external font request.** Packages and stacks are copied
+  from the app's `typography.json`, not imported — and `src/fonts.test.ts` reads that JSON at test time
+  and fails on drift, which is what makes copying safe. `--font-display` mirrors the app's `brand`
+  family — **Orbitron** (`@fontsource-variable/orbitron`, self-hosted), a distinct display face for the
+  brand elements (wordmark + hero heading), falling back to `--font-sans`; section headings and the
+  tagline are the interface face (`--font-sans`), matching the app.
+- **Brand values are copied, not imported.** Theme palettes are lifted at authoring time from
+  `apps/web/src/themes/bundled/*.theme.json` (dark = default, darcula, light, gruvbox) into the site's
+  own CSS custom properties under `[data-theme]`; the site never reaches into `apps/web` at build time
+  (the app's tokens assume the theme engine's runtime swap).
+- **IDE-shell page chrome is single-sourced in components.** `src/components/BaseHead.astro` is the one
+  head the landing and blog use: charset/viewport, favicon, their global stylesheet (which bundles the
+  fonts), and the pre-paint theme guard. `src/components/Analytics.astro` is presentation-free and is
+  included once by every route family. `src/components/IdeShell.astro` is the one IDE shell the landing
+  and blog render through — icon sprite, skip link, title bar (workspace name
+  parameterized: `website` on the landing, `blog` on blog pages, each with the matching
+  `workspace/<name> · from main` branch label, and GitHub + Discord icon links), the left project rail, the right files rail +
+  terminal, the status bar, the post-download thank-you dialog (`DownloadThanks.astro`), and the
+  `main.ts` script import; the center column is its default slot
+  and the right rail's Files rows its `filetree` slot. The left rail carries the site's real
+  navigation as child rows of the `website` workspace — **Landing** (`/`) and **Blog** (`/blog/`,
+  selected on the index and on every article) as links, **Docs** disabled with a `Coming soon` chip
+  (no tooltip — the tag carries the state) — while the remaining mock rows keep the
+  `data-mock-hint` treatment; the selected row wears the same accent-tinted grammar as the right
+  rail's active file row (one grouped CSS rule). `src/components/Copyright.astro` is the one
+  copyright line (shell statusbar). The dark/light theme model lives in
+  `src/theme.ts` (explicit choice in `localStorage` → `prefers-color-scheme` fallback, live
+  system-follow, legacy `darcula`/`gruvbox` values normalize to dark); the inline FOUC guard in
+  BaseHead is its declared twin — a behavior change updates both.
+- **A colour with a contrast floor gets a `:root` token, never the region-inherited `--accent`.**
+  A region may re-point `--accent` (the light theme's kicker pill does; the hero once did), so
+  descendants reading it can inherit a value chosen for another surface. `--link` and `--focus-ring`
+  are declared once on `:root` as `var(--accent)`, which resolves against the *root* accent —
+  per-theme, but out of reach of a region override.
+- **The primary button (and the hero's brand accents) are per-theme, not a brand constant** (decision
+  reversed 2026-08 on review — the light theme kept the dark theme's bright green): the
+  `--control-primary-*` tokens mirror the app's semantic mapping (`bg = accent`, `hovered =
+  accentHover`, `text = onAccent`, per `apps/web/src/styles/colors.json`), declared on `:root` via the
+  root-token mechanism above, with `--accent-hover` copied per theme from the app's palettes. The hero
+  title follows the theme accent like every other accent-coloured element; `palette.test.ts` pins the
+  hovered-fill label contrast.
+- All marketing copy is static DOM text; JS only *enhances* (scroll-spy, the derived editor-tab strip
+  and its scroll-spy/click navigation, terminal typing, chat streaming replay, theme switcher, copy
+  buttons, star count, install-platform selection). The page must read complete with JS disabled (the
+  editor tabs are a JS-built navigation affordance over content that is already reachable by scrolling
+  and via the file tree), and animations are skipped under `prefers-reduced-motion`.
+- **Enhancement behaviors owned by `main.ts`** (the code carries no rationale — this is it):
+  - *Terminal replay*: the Install section's command tabs keep the launcher command in static markup;
+    that command is the single source of truth for the terminal,
+    which subscribes and types it before the short install transcript. A generation counter invalidates an
+    in-flight sequence when the selected command changes; clicking the
+    *finished* terminal (or its keyboard-reachable `Replay logo` button, revealed only then) replays
+    the ASCII logo + a GitHub CTA — never the install. The logo banner's characters are never
+    altered; only its font size is fitted to the rail width (re-fitted on resize).
+  - *Worktree note* (left rail): starts visible in markup (reads with JS disabled); an inline script
+    hides it pre-paint and `main.ts` reveals it after 5s — once per session (`sessionStorage`),
+    never again after Understood (`localStorage`), with a 10s inline-script fallback if `main.ts`
+    fails to load. Storage access is fully guarded (retrieving the storage object itself can throw).
+  - *Mock-callout tooltips*: `data-mock-hint` regions (right-rail tabs, the left rail's remaining
+    mock rows) open a click-persistent callout with a GitHub CTA — click-outside/Escape closes,
+    Escape restores focus. A11y contract: the trigger becomes `role="button"` with `aria-label`
+    (from `data-mock-label`), `aria-expanded` + `aria-describedby` on open — no `aria-haspopup`
+    (a `tooltip` is not an allowed popup value). The `.rail-tabs` callout anchors to the panel's
+    live edge; others place beside the trigger, clamped to the viewport and repositioned on resize.
+- The hero install control is three actions in a row: **Download**, **View on GitHub** (the existing
+  star count fills in beside the label), and **Join our Discord**. Download starts the file for
+  the detected desktop: the Apple Silicon DMG on macOS, the Windows x64 ZIP on Windows, and a Linux
+  archive. Linux uses the ARM64 archive only when a browser hint explicitly says ARM; otherwise the
+  button downloads the x64 archive. When the desktop is unknown, including with JavaScript off,
+  Download scrolls to `#install` instead of choosing a file. **Other platforms & CLI** sits under that button
+  and also scrolls to `#install`. It does not open a menu. JS sets the label and file URL when a
+  desktop is detected, and marks that row in the Install section. Versionless GitHub
+  `releases/latest/download` URLs name the public aliases owned by [[module-ci-release]]; the website
+  carries no release version, updater payload name, or private artifact knowledge. Browser hints
+  choose that file and the initial command tab; they never hide alternatives, treat `MacIntel` as an
+  Intel build, or claim to detect an ambiguous mobile platform.
+- The `INSTALL.md` section is the download surface: one compact platform-row matrix (macOS Apple
+  Silicon DMG, Windows x64 ZIP, Linux x64 and ARM64 archives), then **Browser UI via command line**
+  always visible. Those commands use the same tab chrome as the blog picker, with three tabs —
+  **macOS / Linux / WSL**, **Windows CMD**, **Windows PowerShell**. PowerShell runs
+  `irm …/install.ps1 | iex`, Command Prompt launches `powershell -c "irm …/install.ps1 | iex"`, and
+  macOS, Linux, and WSL share `install.sh`. Every command stays in the static DOM; JS turns that
+  fallback into tabs. Nightly/version examples live in release documentation rather than the marketing page.
+- **Phone visitors get a "Send link to my computer" action** above the hero actions. It is in the static DOM
+  but `hidden`, and `main.ts` reveals it only on a detected phone or tablet (the download link stays visible
+  below it; no platform is hidden). Activation opens the native share sheet with the current page URL, its
+  query replaced by `utm_source=send_to_computer&utm_medium=share` and its fragment by the hero anchor, so
+  the later desktop visit records a tagged first touch. Without Web Share, or when sharing fails for any
+  reason except the visitor dismissing the sheet, it copies the link and briefly shows "Link copied". The
+  control carries `data-share-install-link` for analytics delegation and nothing else.
+
+## Analytics and consent
+
+`src/analytics.ts` is the site-local facade over [[module-website-analytics]]. It supplies the exact
+production hostname `thinkrail.ai`, the build-time `PUBLIC_POSTHOG_PROJECT_KEY` (never committed;
+production `site.yml` passes it from the `website` environment's secret and fails before building
+without it, while previews and local builds have none and stay silent), and adapts Cookiebot's response-aware Marketing state plus
+consent-ready/accept/decline events to the shared current-value/subscription contract; the shared module owns the PostHog endpoints and GTM identifiers,
+journey persistence, typed capture, privacy configuration, and script loaders. Unknown or denied Marketing
+state stays cookieless and carries no journey ID. Localhost, `astro dev`, every `pages.dev` deployment, the
+`jetbrains.github.io` address, and sibling subdomains send nothing.
+
+`src/components/Analytics.astro` initializes that facade and then the idempotent site event delegation
+once per document; it remains the analytics composition point for the IDE-shell and vibecoding routes.
+Content keys derive from `window.location.pathname`: `/` → `landing`, `/blog/` → `blog/index`, and
+other paths containing only lowercase safe characters become the path without outer slashes (so
+`/blog/<slug>/` → `blog/<slug>`). Keys allow only lowercase letters, digits, hyphens, and path
+separators and are limited to 105 characters, enough for `blog/` plus the maximum 100-character post
+slug; invalid paths emit no content or action events. Query and fragment strings are absent from
+`pathname`; dotted `index.html` paths are not route aliases. New pages and posts need no analytics code
+change. Only pages composed with Analytics load it: the authored `src/pages/404.astro` is a standalone,
+analytics-free page served for unknown URLs, and the standalone `/attribution/claim/` page remains
+analytics-free. Each valid document emits one explicit `content_viewed` with its derived key. Build
+validation recursively checks every emitted `.html` document for exactly one PostHog and GTM loader,
+except the explicit analytics-free `404.html` and `/attribution/claim/` outputs, which must contain
+neither loader nor browser analytics. Route-specific layout, artifact, and SEO checks remain focused
+on their owning routes.
+
+At initialization, the current page touch is recorded only when a consented journey already exists;
+journey appearance after initialization does not replay the page URL or referrer, and journey removal
+clears attribution context. Touches carry only bounded UTM values, referrer class, timestamp, and policy
+version; they do not transfer a page key. Website events retain their `content_key` and journey identity,
+so PostHog joins those events to the app's `acquisition_linked.journey_id` for landing/last-page analysis.
+Document-level `click`, middle-button `auxclick`, and disclosure `toggle`
+delegation instruments the static install controls without changing their navigation or no-JS behavior.
+Before each post-initialization install CTA, download, or CLI event, the current navigation touch is
+attempted so consent granted on the page can affect only a subsequent action; a page records that touch
+at most once per consented journey, so later actions on it never drop a bridge its download created
+(see [[submodule-website-attribution]]). Only the four exact stable
+GitHub desktop aliases are downloads. Their CTA location comes from the containing hero, install
+section, quick start, final CTA, or blog post; one recognized activation emits `install_cta_clicked`
+(`desktop`) followed by `download_started`. When a consented journey context is available, the activation
+creates and stores a canonical per-download bridge ID before `download_started`, and that event carries
+the same ID. A later desktop download replaces only the stored latest bridge ID; a download without
+consent remains bridge-less. A primary click on one of those four downloads also opens the
+thank-you dialog and does not cancel the file. The dialog records the PostHog survey
+`Thanks for downloading ThinkRail`: `survey shown` when it opens, `survey dismissed` if it
+closes before an answer, and `survey sent` on each Continue or Finish. One
+`$survey_submission_id` ties those sends together, each send repeats the answers collected so
+far, and `$survey_completed` is true only on Finish, so the furthest event is how far that
+response went. A choice is sent as its label and a custom answer as its typed text; multiple-choice
+answers are arrays. The welcome screen says continuing accepts the privacy policy and links it. The
+dialog initializes only on pages with a valid content key, so its events always carry one. Survey events attempt no attribution touch: they are feedback, not acquisition
+actions, and the download that opened the dialog already recorded the page's touch and bridge.
+Closing the dialog resets it to the welcome screen. The next open is a new
+showing, with a new submission id and a new choice order; answers already sent stay on the
+submission that recorded them. Finishing the survey is remembered in `localStorage` under
+`thinkrail_download_survey_completed`, which holds the survey id and nothing else; it is the dialog's
+UX state, not analytics state, so consent does not gate it. Later downloads still open the dialog,
+but the survey card says the visitor has already answered and offers **Answer again**: `survey shown`
+is sent only when they take it, so closing such a dialog sends nothing, and a new survey id offers
+the survey again. Choice order is shuffled for each response, except a custom answer, which stays
+last. Required steps leave Continue disabled until the answer is valid. The first-try note and
+the email are optional. A filled-in email has to satisfy the browser's email field before
+Finish enables; a blank email does not. While Finish is disabled, a muted note on the same line as the
+button reads “— please enter a valid email or leave it blank”. Opening the blog-post picker's command-line disclosure emits only
+`install_cta_clicked` (`cli`); closing it does not, and the landing's always-visible command tabs emit
+nothing. That open is browsing, not install intent: a
+primary-button click on a `[data-copy]` control whose value is a known install command emits
+`install_command_copied` with its `sh`/`powershell`/`cmd` shell and hero, install-section, or blog-post location
+(other copy values emit nothing; selecting and copying the text manually is not observed). Any other
+link into the `JetBrains/thinkrail` repository (exact repo, `#`/`?` suffix, or sub-path; never a
+sibling repository or a desktop alias) emits `github_clicked` with a `repo`/`releases`/`other` target
+and a location from the containing blog post, final CTA, quick start, install section, hero (`#readme`
+or the vibecoding `#top`), header, footer, terminal, or mock-callout tooltip — `other` when none
+contains it. GitHub clicks are a separate signal: GTM reporting counts only `download_started` and
+`install_command_copied` as install intent, because a repository visit mixes starring and browsing with
+installing. A primary-button click on a `[data-share-install-link]` control in the hero or quick start
+emits `install_link_share_clicked`; it records the activation, not whether the share sheet completed.
+Each of these events attempts the live navigation touch first, like the existing actions. No page or
+child module carries analytics imports, vendor configuration, or another loader; controls expose only
+the `data-copy` / `data-share-install-link` markers the delegation reads. The one exception is
+`src/downloadThanks.ts`: it owns the survey's step state, so it captures the three survey events itself
+through the site facade `src/analytics.ts`, and adds no vendor configuration or loader.
+
+The existing GTM container remains Cookiebot's control plane; route-specific downstream tags use a
+`thinkrail.ai` hostname condition plus Page Path, never another GTM container. Sharing the exact apex
+origin means Cookiebot scans and browser consent state apply to all three route families.
+
+Site tests pin production-host identity, disabled hosts, the Cookiebot adapter, every route key and
+stable desktop alias, event derivation, and initializer idempotence. The shared package tests the
+PostHog/GTM, journey and capture contracts. The shared contract deliberately has no `posthog-js`
+dependency, pasted bootstrap, or static GTM `noscript` iframe.
+
+The non-indexed `/attribution/claim/` route belongs to [[submodule-website-attribution]]; its
+analytics-free page silently attempts the claim bind on load only when the current Cookiebot
+`CookieConsent` cookie records a Marketing grant or `-1`, then navigates to `/blog/`. That module owns
+the claim protocol and framing protections.
+
+## Deploy
+
+Cloudflare Pages project `thinkrail-website` owns production and previews for the static artifact and
+claim Functions. Pinned Wrangler `4.124.0` deploys from `apps/website` so its configuration,
+`functions/`, and `dist` artifact form one deployment. The top-level `ATTRIBUTION_DB` serves production
+and local Pages/D1 workflows; production applies committed attribution migrations before deploy. The
+build compiles the Functions, and a local Pages/D1 smoke starts Pages from the checked-in configuration,
+applies the actual migration, and exercises create, bind, and redeem. `.github/workflows/site.yml` runs
+`bun run --filter @thinkrail/website build` (`astro check`, the Functions typecheck and build, `astro
+build`, and artifact validation) on pushes that
+touch this module, [[module-website-analytics]], the root package manifest, or the lockfile (plus manual
+dispatch). It verifies the provider URL before succeeding. `thinkrail.ai` is the project's custom apex
+domain; provider URLs are deployment probes, not product identities.
+
+Production concurrency never cancels an in-flight publish. Cloudflare retains successful production
+deployments as rollback targets, so rollback selects the prior `main` deployment instead of running a
+second hosting pipeline.
+
+### PR preview deploys
+
+`.github/workflows/site-preview.yml` runs the same build command and uploads to branch `pr-<number>` in
+`thinkrail-website`. The Wrangler `env.preview` override gives preview deployments no D1 binding;
+the production-origin guard independently continues to return not-found for preview attribution
+requests before D1 access. The deterministic alias
+`https://pr-<number>.thinkrail-website.pages.dev` is surfaced as one sticky PR comment and one
+`Website preview` commit status covering `/`, `/blog/`, `/vibecoding/`, `/agentic-development/`,
+and `/agentic-ide/`. It waits for all of those routes to serve before publishing the URL.
+
+Same-repository PRs only receive previews; fork PRs skip because Cloudflare credentials never cross the
+repository boundary. Preview URLs are public and analytics-silent while their PR is open. A separate
+close workflow recognizes the sticky preview marker, deletes every deployment for that PR branch, and
+marks its preview metadata retired; PRs without that marker are no-ops. The shared concurrency group
+prevents cleanup racing an in-flight publish. A newer push cancels only the superseded preview for that
+PR.
+
+One-time setup creates `thinkrail-website` with production branch `main`, using
+`CLOUDFLARE_API_TOKEN` (Pages:Edit plus D1:Edit for committed attribution migrations) and
+`CLOUDFLARE_ACCOUNT_ID` repository secrets, then attaches the `thinkrail.ai` custom domain after the
+provider-hosted main deployment is verified. The token permission update must land before the first
+claim-enabled production deployment.
+
+### Hosting and retired hostname
+
+Cloudflare-managed DNS routes `thinkrail.ai` to the verified `main` deployment. Production rollback
+selects a prior successful `main` deployment through Pages; legacy hosting is not part of the steady
+state.
+
+`vibecoding.thinkrail.ai` is a Cloudflare Single Redirect: hostname match, dynamic target
+`concat("https://thinkrail.ai/vibecoding", http.request.uri.path)`, status 301, and query preservation
+enabled. Its originless proxied `192.0.2.1` record keeps the redirect resolvable without a deployment.
+
+## Blog
+
+The `/blog` subsite is a typed Astro content collection over Markdown posts in `content/blog/`
+(each post: a folder with `index.md` + optional `images/`), rendered by `src/pages/blog/` through
+`src/layouts/BlogLayout.astro`. Published posts that carry live installation guidance follow the
+current desktop-first hierarchy rather than freezing obsolete CLI-only instructions.
+
+- **Schema is the gate** (`src/content.config.ts`, zod): required `title`/`slug`/`date`/`author`,
+  optional `excerpt`/`draft`/`tags`. A malformed or reserved slug, a missing field, an unknown
+  `author` key, or two posts sharing a slug **fails the build** — no silent green deploys. Drafts
+  render in `astro dev` (author preview, hot reload) and are excluded from production builds (`src/blogCollection.ts`, the one
+  query — newest-first, draft-filtered — that the index, post pages, and RSS all share).
+- **URLs are directory-style** (`/blog/<slug>/`), decided while the blog was unpublished so nothing
+  broke; RSS at `/blog/rss.xml` (`@astrojs/rss`). Post pages carry meta description (the excerpt),
+  canonical, OG/article tags.
+- **Code blocks**: Astro's built-in Shiki, dual `github-light`/`github-dark` themes emitted as
+  `--shiki-light`/`--shiki-dark` CSS vars (`defaultColor: false`) so the site's `[data-theme]`
+  switch — not a media query — picks the palette. Styled under `.astro-code` in `src/styles.css`.
+- **YouTube embeds must be cookieless**: authors write plain iframes; the Sätteri HAST plugin
+  `src/youTubeEmbeds.ts` (Astro 7's native Markdown processor — the unified/rehype pipeline is a
+  separate legacy package we don't carry) rewrites `youtube.com/embed` → `youtube-nocookie.com` and
+  adds `title` + `loading="lazy"` when omitted. This keeps the no-consent-banner stance intact.
+- **Original post images are published as-is**: Astro rewrites only `img` sources to fingerprinted
+  WebP assets, so a Markdown link to `./images/<file>` would otherwise 404.
+  `src/pages/blog/[slug]/images/[file].ts` emits every image in a published post's `images/` folder
+  byte-for-byte at `/blog/<slug>/images/<file>`. It walks `publishedPosts()`, so draft images never ship.
+  The folder resolves from the Astro root (not the working directory); a post without `images/` has
+  none, but any other read failure fails the build, and `validateBuild` fails when a relative link on a
+  post has no built file — a silently empty route would otherwise ship 404 links.
+- **Table images are thumbnails**: a linked image's cell takes two thirds of its row and the image fills its
+  width at its own aspect ratio — no height cap, since a capped, letterboxed thumbnail left the cell's
+  width unused. The width stays definite so lazy images reserve their box before loading — a
+  `width: auto` box-fit was rejected because unloaded images collapse to 0×0, shift the layout and all
+  load at once. Below 520px of *content* width
+  (a container query: the blog pane's width does not follow the viewport) the cells stack. An all-empty
+  header row is hidden, so a post can lay rows out as header-less tables (e.g. alternating image sides).
+  Thumbnails are still Astro's full-resolution WebP, lazy-loaded; true downscaled thumbnails are deferred.
+  When the image is wrapped in a link, `src/imageZoom.ts` turns a plain primary click (or Enter on the
+  link) into a modal `<dialog>`, named by the image's alt, showing the link target; modified or
+  non-primary clicks and no-JS visits follow the link instead.
+- **Chrome: blog pages live inside the IDE shell**, not a separate page frame (decision, 2026-08 —
+  the prior standalone blog header/footer is deleted). `BlogLayout.astro` renders through
+  `IdeShell.astro`: the content sits in the same scrolling editor pane as the landing sections, in a
+  `.blog-main` container sharing their exact geometry (one grouped `.file-section, .blog-main` CSS
+  rule — deliberately *not* the `.file-section` class, whose typography cascade would fight the blog
+  content styles). Opening an article replaces the index in that same central area. **No tab strip on
+  blog pages** (the landing keeps its section tabs; page-level Landing/Blog tabs were explicitly
+  rejected for now). The right rail's Files list shows the published articles (current one
+  active); the terminal keeps its static install transcript — `main.ts` guards make every
+  landing-only enhancement inert (no sections → no scroll-spy; only the landing command tabs drive the
+  terminal replay).
+- **Every article ends with the install picker.** `src/components/InstallPicker.astro` is the
+  blog picker markup (OS tabs, desktop downloads, **Browser UI via command line** disclosure with Windows
+  shell tabs). `src/pages/blog/[slug].astro` renders it in a `.blog-post-install`
+  section after the post body. It sits inside `.blog-post`,
+  so its downloads, copies, and disclosure opens report `blog_post`, and outside `.blog-post-content`, so
+  the prose cascade never restyles it. `main.ts` drives that picker; posts keep their
+  own prose install guidance, and `validateBuild.ts` requires the picker on every article.
+  Post cards are whole-card links that signal hover on the border alone (no underline, no movement)
+  and share the landing feature cards' surface, which keeps the `--elevated` tag chips visible on
+  them. Theming: BaseHead (theme guard, fonts, analytics) + the `src/theme.ts` toggle via the
+  shell's `main.ts` — same behavior as the landing page, one implementation.
+- **Authors are a shared entity, not a per-post string.** A second collection (`authors`) loads
+  `content/authors.json` through Astro's `file()` loader — one object keyed by author key, schema
+  `name` required + `url` optional (present ⇒ the byline name renders as a link). Posts carry
+  `author: reference("authors")`, **required**, so referential integrity is the framework's check:
+  a misspelled key is a build failure, and a renamed author or a new link updates every post at once.
+  Resolution is centralized as `postAuthor()` in `src/blogCollection.ts`; no page inlines the lookup.
+  Avatar/role fields are deliberately absent — a schema field with no renderer is dead surface;
+  both are additive later.
+  - *Byline placement (decision, 2026-08):* the **post header only**, as the first item of the
+    `.blog-post-meta` row (`author · date · reading time`), sharing the date's hint colour, size, and
+    one grouped `·` separator rule. Index cards, RSS items, OG/`article:author` meta, an end-of-post
+    author card, and `/blog/authors/<key>/` pages were each considered and declined for now — the
+    shared entity keeps every one of them a cheap follow-up.
+- **Author guide**: `content/blog/BLOG.md` documents the frontmatter schema, the author profiles,
+  Markdown features, embeds, and the local preview loop (`bun run dev` hot-reloads posts).
+  them. Theming: BaseHead (theme guard + fonts) + the `src/theme.ts` toggle via the shell's `main.ts`
+  — same behavior as the landing page, one implementation; Analytics remains the separate shared head
+  initializer.
+- **Author guide**: `content/blog/BLOG.md` documents the frontmatter schema, Markdown features,
+  embeds, and the local preview loop (`bun run dev` hot-reloads posts).
+- **Deployment**: alongside the main site via the same `site.yml` workflow; changes to
+  `apps/website/content/blog/**` trigger a rebuild.
+
+## Discovery and assets
+
+One apex `robots.txt` allows the public site and points crawlers at Astro's generated sitemap. The
+sitemap derives from the same static route build and therefore covers `/`, the blog index and published
+posts, and `/vibecoding/`; `/agentic-development/` and `/agentic-ide/` are filtered out of the
+sitemap because they canonicalize to `/vibecoding/` (see [[submodule-website-vibecoding]]). Previews keep production
+canonical URLs and do not become a second search identity.
+
+`public/_redirects` maps `/discord` to the community server invite, so `thinkrail.ai/discord` is the one
+Discord link the site, blog posts, README, and app use — a rotated invite is a one-line site deploy, never
+an app release. `validateBuild` fails a build that drops it. Discord clicks emit no analytics event yet.
+
+`public/favicon.svg` is the IDE-shell landing/blog tab icon: a rounded tile in the brand primary green carrying the
+**header wordmark's TR mark** (same `viewBox` + paths, not redrawn) in black, centred with balanced
+padding for legibility at tab sizes. It is wired via `<link rel="icon" type="image/svg+xml">` in
+`index.html`; there is no `.ico` fallback.
+
+`public/og.png` is a capture of the site's own hero inside the IDE shell (dark theme, Landing
+selected, terminal install transcript finished, worktree note visible). The transcript in the
+`features/agent-chat.md` section is from a real `pi` session captured in the app while it worked on
+this repo. Re-capture: `astro preview` the built site, view it at a 1200×630 viewport with
+deviceScaleFactor 2 (dark theme), wait for the terminal replay + the rail note (~7s), screenshot the
+viewport, and downscale the 2400×1260 capture to 1200×630.
+
+`public/vibecoding/` owns that route's distinct favicon, 1200×630 Open Graph image, and gradient
+wordmark. Their public URLs remain under `/vibecoding/`, while Vite-generated chunks stay under the
+site-wide `/_astro/` root because one Astro base serves all route families.

@@ -1,0 +1,374 @@
+import type { UserMessage } from "@thinkrail/contracts";
+import type { Translator } from "@thinkrail/locales/react";
+
+export const DOUBLE_CLICK_SETTLE_MS = 250;
+
+let lastFirstClickAt = Number.NEGATIVE_INFINITY;
+
+export function firstClickOnly(
+	run: () => void,
+	now: () => number = () => performance.now(),
+): (event: { detail: number }) => void {
+	return (event) => {
+		if (event.detail > 1) return;
+		if (event.detail === 1) lastFirstClickAt = now();
+		run();
+	};
+}
+
+export function doubleClickPendingMs(now = performance.now()): number {
+	return Math.max(0, DOUBLE_CLICK_SETTLE_MS - (now - lastFirstClickAt));
+}
+
+export function tupleKey(namespace: string, ...parts: string[]): string {
+	return `${namespace}:${parts.map((part) => `${part.length}:${part}`).join("")}`;
+}
+
+type LayoutDiffScopeInput =
+	| { kind: "branch" | "uncommitted" }
+	| { kind: "commit"; sha: string }
+	| { kind: "pinned"; baseRef: string }
+	| { kind: "turn"; id: string };
+
+type LayoutResourceIdentityInput =
+	| { kind: "file"; path: string }
+	| { kind: "diff"; path: string; before?: undefined; scope: LayoutDiffScopeInput }
+	| { kind: "diff"; path: string; before: string }
+	| { kind: "changes"; scope: LayoutDiffScopeInput }
+	| { kind: "chat"; sessionId: string }
+	| { kind: "document"; documentKind: string; sourceId: string }
+	| { kind: "terminal"; tabKey: string }
+	| { kind: "tool"; tool: string };
+
+function layoutScopeReference(scope: LayoutDiffScopeInput): string {
+	switch (scope.kind) {
+		case "commit":
+			return scope.sha;
+		case "pinned":
+			return scope.baseRef;
+		case "turn":
+			return scope.id;
+		default:
+			return "";
+	}
+}
+
+export function isPreviewCompatibleTabKind(kind: string): boolean {
+	return kind === "file" || kind === "diff" || kind === "changes";
+}
+
+export function layoutResourceIdentity<T extends LayoutResourceIdentityInput>(tab: T): string {
+	switch (tab.kind) {
+		case "file":
+			return tupleKey("layout-resource", "file", tab.path);
+		case "diff":
+			return tab.before === undefined
+				? tupleKey(
+						"layout-resource",
+						"diff",
+						tab.path,
+						tab.scope.kind,
+						layoutScopeReference(tab.scope),
+					)
+				: tupleKey("layout-resource", "compare", tab.before, tab.path);
+		case "changes":
+			return tupleKey(
+				"layout-resource",
+				"changes",
+				tab.scope.kind,
+				layoutScopeReference(tab.scope),
+			);
+		case "chat":
+			return tupleKey("layout-resource", "chat", tab.sessionId);
+		case "document":
+			return tupleKey("layout-resource", "document", tab.documentKind, tab.sourceId);
+		case "terminal":
+			return tupleKey("layout-resource", "terminal", tab.tabKey);
+		case "tool":
+			return tupleKey("layout-resource", "tool", tab.tool);
+	}
+}
+
+export function parseTupleKey(key: string, namespace: string): string[] | null {
+	const prefix = `${namespace}:`;
+	if (!key.startsWith(prefix)) return null;
+	const parts: string[] = [];
+	let offset = prefix.length;
+	while (offset < key.length) {
+		const separator = key.indexOf(":", offset);
+		if (separator < 0) return null;
+		const lengthText = key.slice(offset, separator);
+		if (!/^(0|[1-9]\d*)$/.test(lengthText)) return null;
+		const length = Number(lengthText);
+		if (!Number.isSafeInteger(length)) return null;
+		const start = separator + 1;
+		const end = start + length;
+		if (end > key.length) return null;
+		parts.push(key.slice(start, end));
+		offset = end;
+	}
+	return parts;
+}
+
+export function randomId(prefix = "id"): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	const value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+	return `${prefix}-${value}`;
+}
+
+export function randomUuid(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+	bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function userText(content: UserMessage["content"]): string {
+	if (typeof content === "string") return content;
+	return content
+		.filter((c) => c.type === "text")
+		.map((c) => c.text)
+		.join("");
+}
+
+export function firstNonBlankLine(text: string): string | undefined {
+	let start = 0;
+	while (start < text.length) {
+		const newline = text.indexOf("\n", start);
+		const end = newline === -1 ? text.length : newline;
+		const line = text.slice(start, end).trim();
+		if (line) return line;
+		start = end + 1;
+	}
+	return undefined;
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function ancestorPaths(path: string): string[] {
+	const segments = path.split("/");
+	segments.pop();
+	return segments.map((_, index) => segments.slice(0, index + 1).join("/"));
+}
+
+export function normalizePath(path: string): string {
+	return path.replaceAll("\\", "/").replace(/^\.\/+/, "");
+}
+
+function hasWindowsDriveRoot(path: string): boolean {
+	return /^[A-Za-z]:\//.test(normalizePath(path));
+}
+
+export function isAbsolutePath(path: string): boolean {
+	const normalized = normalizePath(path);
+	return normalized.startsWith("/") || hasWindowsDriveRoot(normalized);
+}
+
+export function shallowEqualArrays(
+	a: readonly unknown[] | undefined,
+	b: readonly unknown[] | undefined,
+): boolean {
+	if (a === b) return true;
+	if (!a || !b || a.length !== b.length) return false;
+	return a.every((value, i) => Object.is(value, b[i]));
+}
+
+export function fileName(path: string): string {
+	const parts = normalizePath(path).split("/").filter(Boolean);
+	return parts.at(-1) ?? path;
+}
+
+function trimTrailingSlashes(path: string): string {
+	return path === "/" || /^[A-Za-z]:\/$/.test(path) ? path : path.replace(/\/+$/, "");
+}
+
+function canonicalPosixPath(path: string): string {
+	const normalized = normalizePath(path);
+	const drive = /^[A-Za-z]:\//.exec(normalized)?.[0];
+	const absolute = normalized.startsWith("/") || drive !== undefined;
+	const body = drive ? normalized.slice(drive.length) : normalized.replace(/^\/+/, "");
+	const segments: string[] = [];
+	for (const segment of body.split("/")) {
+		if (!segment || segment === ".") continue;
+		if (segment === "..") {
+			const previous = segments.at(-1);
+			if (previous && previous !== "..") segments.pop();
+			else if (!absolute) segments.push(segment);
+			continue;
+		}
+		segments.push(segment);
+	}
+	const prefix = drive ?? (absolute ? "/" : "");
+	return `${prefix}${segments.join("/")}`;
+}
+
+export function projectRelativePath(path: string, workspaceRoot?: string | undefined): string {
+	const canonical = canonicalPosixPath(path);
+	if (!canonical || !isAbsolutePath(canonical)) return canonical;
+
+	const root = workspaceRoot ? trimTrailingSlashes(canonicalPosixPath(workspaceRoot)) : "";
+	const ignoreCase = hasWindowsDriveRoot(canonical) && hasWindowsDriveRoot(root);
+	const comparableCanonical = ignoreCase ? canonical.toLowerCase() : canonical;
+	const comparableRoot = ignoreCase ? root.toLowerCase() : root;
+	const rootPrefix = comparableRoot.endsWith("/") ? comparableRoot : `${comparableRoot}/`;
+	if (
+		comparableRoot &&
+		(comparableCanonical === comparableRoot || comparableCanonical.startsWith(rootPrefix))
+	) {
+		return canonical.slice(root.length).replace(/^\/+/, "") || fileName(canonical);
+	}
+
+	return canonical;
+}
+
+let colorCanvas: CanvasRenderingContext2D | null | undefined;
+
+function canvasNormalize(color: string): string {
+	if (typeof document === "undefined") return "";
+	colorCanvas ??= document.createElement("canvas").getContext("2d");
+	if (!colorCanvas) return "";
+	colorCanvas.fillStyle = "#000000";
+	colorCanvas.fillStyle = color;
+	const first = colorCanvas.fillStyle;
+	colorCanvas.fillStyle = "#ffffff";
+	colorCanvas.fillStyle = color;
+	return first === colorCanvas.fillStyle ? first : "";
+}
+
+function srgbColorToHex(color: string): string {
+	const component = "([+-]?(?:\\d*\\.)?\\d+(?:e[+-]?\\d+)?%?)";
+	const match = new RegExp(
+		`^color\\(srgb\\s+${component}\\s+${component}\\s+${component}(?:\\s*\\/\\s*${component})?\\)$`,
+		"i",
+	).exec(color);
+	if (!match) return "";
+	const fraction = (value: string | undefined, fallback: number): number => {
+		if (value === undefined) return fallback;
+		return value.endsWith("%") ? Number.parseFloat(value) / 100 : Number(value);
+	};
+	const values = [
+		fraction(match[1], 0),
+		fraction(match[2], 0),
+		fraction(match[3], 0),
+		fraction(match[4], 1),
+	];
+	if (values.some((value) => !Number.isFinite(value))) return "";
+	const channels = values.map((value) => Math.round(Math.min(1, Math.max(0, value)) * 255));
+	if (match[4] === undefined) channels.pop();
+	return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function cssColorToHex(color: string): string {
+	const value = color.trim();
+	const short = /^#([0-9a-f]{3,4})$/i.exec(value)?.[1];
+	if (short) return `#${[...short].map((c) => c + c).join("")}`;
+	if (/^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(value)) return value;
+	const directSrgb = srgbColorToHex(value);
+	if (directSrgb) return directSrgb;
+	const parsed = canvasNormalize(value);
+	if (parsed.startsWith("#")) return parsed;
+	const parsedSrgb = srgbColorToHex(parsed);
+	if (parsedSrgb) return parsedSrgb;
+	const [, r, g, b, a] = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(parsed) ?? [];
+	const channels = [Number(r), Number(g), Number(b), Math.round(Number(a) * 255)];
+	if (channels.some((c) => !Number.isFinite(c))) return "";
+	return `#${channels.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
+const APPLE_PLATFORM = /Mac|iPhone|iPad|iPod/;
+
+function browserPlatform(): string {
+	return typeof navigator === "undefined" ? "" : (navigator.platform ?? "");
+}
+
+function isApplePlatform(platform: string): boolean {
+	return APPLE_PLATFORM.test(platform);
+}
+
+export function platformFamily(platform = browserPlatform()) {
+	if (isApplePlatform(platform)) return "apple";
+	if (/^Win/.test(platform)) return "windows";
+	if (/Linux/.test(platform)) return "linux";
+	return "other";
+}
+
+export function hasPlatformModifier(
+	event: Pick<KeyboardEvent, "ctrlKey" | "metaKey">,
+	platform = browserPlatform(),
+): boolean {
+	return isApplePlatform(platform)
+		? event.metaKey && !event.ctrlKey
+		: event.ctrlKey && !event.metaKey;
+}
+
+export function platformShortcutLabel(
+	key: string,
+	{ alt = false, platform = browserPlatform() }: { alt?: boolean; platform?: string } = {},
+): string {
+	if (isApplePlatform(platform)) return alt ? `⌥⌘${key}` : `⌘${key}`;
+	return alt ? `Ctrl+Alt+${key}` : `Ctrl+${key}`;
+}
+
+export function relativeTime(t: Translator, ms: number, now: number): string {
+	const s = Math.floor((now - ms) / 1000);
+	if (s < 60) return t("lib.relativeTime.justNow");
+	const m = Math.floor(s / 60);
+	if (m < 60) return t("lib.relativeTime.minutes", { count: m });
+	const h = Math.floor(m / 60);
+	if (h < 24) return t("lib.relativeTime.hours", { count: h });
+	return t("lib.relativeTime.days", { count: Math.floor(h / 24) });
+}
+
+/** Compact elapsed label for dense rows: `3h`, `12d`, `3w`, `4mo`. */
+export function compactAge(t: Translator, ms: number, now: number): string {
+	const hours = Math.max(0, Math.floor((now - ms) / 3_600_000));
+	if (hours < 1) return t("lib.compactAge.underHour");
+	if (hours < 24) return t("lib.compactAge.hours", { count: hours });
+	const days = Math.floor(hours / 24);
+	if (days < 14) return t("lib.compactAge.days", { count: days });
+	const weeks = Math.floor(days / 7);
+	if (weeks < 10) return t("lib.compactAge.weeks", { count: weeks });
+	return t("lib.compactAge.months", { count: Math.floor(days / 30) });
+}
+
+export function isShellInert(value: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value);
+}
+
+export async function copyText(text: string): Promise<boolean> {
+	try {
+		await navigator.clipboard.writeText(text);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export const MODAL_LAYER_SELECTOR = [
+	'[aria-modal="true"]',
+	'[role="dialog"][data-state="open"]',
+	'[role="alertdialog"][data-state="open"]',
+].join(", ");
+
+export function hasLayer(root: Pick<Document, "querySelector">, selector: string): boolean {
+	return root.querySelector(selector) !== null;
+}
+
+const TEXT_ENTRY_ROOT_SELECTOR = ".monaco-editor, .xterm";
+
+export function isTextEntryTarget(target: EventTarget | null): boolean {
+	const element = target as {
+		isContentEditable?: boolean;
+		tagName?: string;
+		closest?: (selector: string) => Element | null;
+	} | null;
+	return (
+		element !== null &&
+		(element.isContentEditable === true ||
+			/^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName ?? "") ||
+			(typeof element.closest === "function" && element.closest(TEXT_ENTRY_ROOT_SELECTOR) !== null))
+	);
+}

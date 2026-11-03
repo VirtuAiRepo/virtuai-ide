@@ -1,0 +1,430 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readdirSync, rmdirSync, rmSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import type {
+	McpProjectOverride,
+	McpToolGrant,
+	Project,
+	ProjectPathStatus,
+} from "@thinkrail/contracts";
+import { CodedError } from "@thinkrail/shared/codedError";
+import { canonicalPath, git } from "../git";
+import { loadProjects, loadWorkspaces, saveProjects } from "../persistence";
+
+type ProjectPublisher = (project: Project) => void;
+
+let publishProject: ProjectPublisher | null = null;
+
+export function setProjectPublisher(fn: ProjectPublisher | null): void {
+	publishProject = fn;
+}
+
+function emit(project: Project): void {
+	publishProject?.(project);
+}
+
+export function resolveProjectPath(path: string): string {
+	const home =
+		(process.platform === "win32" ? process.env.USERPROFILE : process.env.HOME) || homedir();
+	const underHome =
+		path.startsWith("~/") || (process.platform === "win32" && path.startsWith("~\\"));
+	const expanded = path === "~" ? home : underHome ? join(home, path.slice(2)) : path;
+	if (!isAbsolute(expanded)) {
+		const homeForms = process.platform === "win32" ? "~/ or ~\\" : "~/";
+		throw new Error(`Project path must be absolute or start with ${homeForms}: ${path}`);
+	}
+	return resolve(expanded);
+}
+
+function gitToplevel(path: string): string | null {
+	const result = git(path, ["rev-parse", "--show-toplevel"]);
+	return result.ok && result.out ? resolve(result.out) : null;
+}
+
+function slugify(name: string): string {
+	return (
+		name
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "") || "project"
+	);
+}
+
+function uniqueSlug(base: string, taken: Set<string>): string {
+	if (!taken.has(base)) return base;
+	let n = 2;
+	while (taken.has(`${base}-${n}`)) n += 1;
+	return `${base}-${n}`;
+}
+
+function ensureSlugs(projects: Project[]): boolean {
+	const taken = new Set(projects.map((p) => p.slug).filter(Boolean));
+	let changed = false;
+	for (const project of projects) {
+		if (!project.slug) {
+			project.slug = uniqueSlug(slugify(project.name), taken);
+			taken.add(project.slug);
+			changed = true;
+		}
+	}
+	return changed;
+}
+
+/** Whether pi itself already trusts a path; seeds a newly added project's pi-level trust. */
+export type PiTrustSeed = (path: string) => boolean;
+let piTrustSeed: PiTrustSeed | null = null;
+
+export function setPiTrustSeed(seed: PiTrustSeed | null): void {
+	piTrustSeed = seed;
+}
+
+export function getProjects(): Project[] {
+	const projects = loadProjects();
+	if (ensureSlugs(projects)) saveProjects(projects);
+	return projects;
+}
+
+export function openProject(inputPath: string, displayName?: string): Project {
+	const path = resolveProjectPath(inputPath);
+	const root = gitToplevel(path);
+	if (!root) throw new CodedError("NOT_GIT", `Not a git repository: ${path}`);
+
+	const projects = getProjects();
+	const existing = projects.find((p) => p.path === root);
+	if (existing) {
+		delete existing.closed;
+		existing.lastOpened = Date.now();
+		saveProjects(projects);
+		emit(existing);
+		return existing;
+	}
+
+	const wanted = canonicalPath(root);
+	if (loadWorkspaces().some((ws) => canonicalPath(ws.worktreePath) === wanted))
+		throw new CodedError(
+			"ALREADY_OPEN",
+			`This folder is already open in VirtuAI as a workspace: ${root}`,
+		);
+
+	const taken = new Set(projects.map((p) => p.slug));
+	const label = displayName?.replace(/\s+/g, " ").trim();
+	const project: Project = {
+		id: randomUUID(),
+		name: label && label.length <= PROJECT_NAME_MAX_LENGTH ? label : basename(root),
+		path: root,
+		slug: uniqueSlug(slugify(basename(root)), taken),
+		lastOpened: Date.now(),
+		piResourceTrust: piTrustSeed?.(root) ? "granted" : "untrusted",
+	};
+	projects.push(project);
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+function newestFirst(projects: Project[]): Project[] {
+	return projects.sort((a, b) => b.lastOpened - a.lastOpened);
+}
+
+export function listProjects(): Project[] {
+	return newestFirst(getProjects().filter((project) => project.closed !== true));
+}
+
+const goneFolders = new Set<string>();
+const folderChecks = new Map<string, Promise<void>>();
+
+function checkFolder(path: string): Promise<void> {
+	const pending = folderChecks.get(path);
+	if (pending) return pending;
+	const check = stat(path)
+		.then(
+			(stats) => !stats.isDirectory(),
+			(error) => {
+				const code = (error as { code?: string }).code;
+				return code === "ENOENT" || code === "ENOTDIR";
+			},
+		)
+		.then((gone) => {
+			if (gone) goneFolders.add(path);
+			else goneFolders.delete(path);
+			folderChecks.delete(path);
+		});
+	folderChecks.set(path, check);
+	return check;
+}
+
+export async function refreshRecentProjectFolders(budgetMs: number): Promise<void> {
+	const checks = getProjects()
+		.filter((project) => project.closed === true)
+		.map((project) => checkFolder(project.path));
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const budget = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, budgetMs);
+	});
+	await Promise.race([Promise.all(checks), budget]);
+	clearTimeout(timer);
+}
+
+export function listRecentProjects(): Project[] {
+	return newestFirst(
+		getProjects().filter((project) => project.closed !== true || !goneFolders.has(project.path)),
+	);
+}
+
+export function closeProject(id: string): Project {
+	const projects = getProjects();
+	const project = projects.find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	project.closed = true;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+const PROJECT_NAME_MAX_LENGTH = 100;
+
+export function renameProject(id: string, requestedName: string): Project {
+	const name = requestedName.replace(/\s+/g, " ").trim();
+	if (!name || name.length > PROJECT_NAME_MAX_LENGTH)
+		throw new Error(`Invalid project name: ${requestedName}`);
+	const projects = getProjects();
+	const project = projects.find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	if (project.name === name) return project;
+	project.name = name;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+export function setProjectTrust(
+	id: string,
+	trusted: boolean,
+	acknowledgedSkills?: string[],
+	options: { resources?: boolean } = {},
+): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	project.trusted = trusted;
+	if (!trusted) project.piResourceTrust = "untrusted";
+	else if (options.resources === true) project.piResourceTrust = "granted";
+	if (acknowledgedSkills !== undefined) project.acknowledgedSkills = acknowledgedSkills;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+export function approveProjectMcpServer(id: string, name: string, fingerprint: string): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	project.mcpApprovals = { ...project.mcpApprovals, [name]: fingerprint };
+	saveProjects(projects);
+	return project;
+}
+
+export function setProjectMcpOverride(
+	id: string,
+	name: string,
+	patch: McpProjectOverride | null,
+): Project {
+	if (patch !== null) {
+		if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
+			throw new CodedError("MCP_CONFIG_INVALID", "MCP server enabled must be a boolean");
+		}
+		if (
+			patch.exposure !== undefined &&
+			patch.exposure !== "deferred" &&
+			patch.exposure !== "direct" &&
+			patch.exposure !== "hidden"
+		) {
+			throw new CodedError(
+				"MCP_CONFIG_INVALID",
+				"MCP server exposure must be deferred, direct or hidden",
+			);
+		}
+	}
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const overrides: Record<string, McpProjectOverride> = { ...project.mcpOverrides };
+	if (patch === null) {
+		delete overrides[name];
+	} else {
+		if (patch.enabled === undefined && patch.exposure === undefined) return project;
+		const override = {
+			...(Object.hasOwn(overrides, name) ? overrides[name] : {}),
+			...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+			...(patch.exposure !== undefined ? { exposure: patch.exposure } : {}),
+		};
+		Object.defineProperty(overrides, name, {
+			value: override,
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
+	}
+	if (Object.keys(overrides).length === 0) delete project.mcpOverrides;
+	else project.mcpOverrides = overrides;
+	saveProjects(projects);
+	return project;
+}
+
+function setOwn<T>(record: Record<string, T>, key: string, value: T): void {
+	Object.defineProperty(record, key, {
+		value,
+		enumerable: true,
+		configurable: true,
+		writable: true,
+	});
+}
+
+export function grantProjectMcpTool(
+	id: string,
+	name: string,
+	target: string,
+	tool: string,
+): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const grants: Record<string, McpToolGrant> = { ...project.mcpToolGrants };
+	const current = Object.hasOwn(grants, name) ? grants[name] : undefined;
+	const tools = current?.target === target ? current.tools.filter((t) => t !== tool) : [];
+	setOwn(grants, name, { target, tools: [...tools, tool] });
+	project.mcpToolGrants = grants;
+	saveProjects(projects);
+	return project;
+}
+
+export function revokeProjectMcpTool(id: string, name: string, tool: string): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const grants: Record<string, McpToolGrant> = { ...project.mcpToolGrants };
+	const current = Object.hasOwn(grants, name) ? grants[name] : undefined;
+	if (!current) return project;
+	const tools = current.tools.filter((t) => t !== tool);
+	if (tools.length === 0) delete grants[name];
+	else setOwn(grants, name, { target: current.target, tools });
+	if (Object.keys(grants).length === 0) delete project.mcpToolGrants;
+	else project.mcpToolGrants = grants;
+	saveProjects(projects);
+	return project;
+}
+
+export function acknowledgeProjectSkills(id: string, names: string[]): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	project.acknowledgedSkills = [...new Set([...(project.acknowledgedSkills ?? []), ...names])];
+	saveProjects(projects);
+	return project;
+}
+
+export function setProjectSkillEnabled(id: string, name: string, enabled: boolean): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const disabled = new Set(project.disabledSkills ?? []);
+	if (enabled) disabled.delete(name);
+	else disabled.add(name);
+	project.disabledSkills = [...disabled];
+	saveProjects(projects);
+	return project;
+}
+
+export function setProjectGroupEnabled(id: string, group: string, enabled: boolean): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const groups = new Set(project.disabledGroups ?? []);
+	if (enabled) groups.delete(group);
+	else groups.add(group);
+	project.disabledGroups = [...groups];
+	saveProjects(projects);
+	return project;
+}
+
+export function isProjectTrusted(id: string): boolean {
+	return getProjects().find((p) => p.id === id)?.trusted === true;
+}
+
+function inspectResolvedProjectPath(path: string): ProjectPathStatus {
+	let stat: ReturnType<typeof statSync>;
+	try {
+		stat = statSync(path);
+	} catch {
+		return { kind: "missing" };
+	}
+	if (!stat.isDirectory()) return { kind: "notDirectory" };
+	return { kind: gitToplevel(path) ? "repo" : "initable" };
+}
+
+export function inspectProjectPath(inputPath: string): ProjectPathStatus {
+	return inspectResolvedProjectPath(resolveProjectPath(inputPath));
+}
+
+export function initProject(inputPath: string): Project {
+	const path = resolveProjectPath(inputPath);
+	const status = inspectResolvedProjectPath(path);
+	if (status.kind === "missing") throw new Error(`No such folder: ${path}`);
+	if (status.kind === "notDirectory") throw new Error(`Not a folder: ${path}`);
+	if (status.kind === "repo") return openProject(path);
+	bootstrapRepository(path);
+	return openProject(path);
+}
+
+export function createProject(
+	parentPath: string,
+	requestedName: string,
+	displayName?: string,
+): Project {
+	const name = requestedName.trim();
+	if (!name || name === "." || name === ".." || /[/\\\0]/.test(name)) {
+		throw new Error(`Invalid project folder name: ${requestedName}`);
+	}
+	const parent = resolveProjectPath(parentPath);
+	mkdirSync(parent, { recursive: true });
+	const path = join(parent, name);
+	let created = false;
+	try {
+		if (!statSync(path).isDirectory()) throw new Error(`Not a folder: ${path}`);
+		if (readdirSync(path).length > 0)
+			throw new Error(`Folder already exists and isn't empty: ${path}`);
+	} catch (err) {
+		if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) throw err;
+		mkdirSync(path);
+		created = true;
+	}
+	try {
+		bootstrapRepository(path);
+		return openProject(path, displayName);
+	} catch (err) {
+		rmSync(join(path, ".git"), { recursive: true, force: true });
+		if (created && readdirSync(path).length === 0) rmdirSync(path);
+		throw err;
+	}
+}
+
+function bootstrapRepository(path: string): void {
+	const init = git(path, ["init", "-b", "main"]);
+	if (!init.ok) throw new Error(`git init failed: ${path}`);
+	try {
+		const added = git(path, ["add", "-A"]);
+		if (!added.ok) throw new Error(`git add failed: ${path}`);
+
+		const identity: string[] = [];
+		if (!git(path, ["config", "user.name"]).out) identity.push("-c", "user.name=VirtuAI");
+		if (!git(path, ["config", "user.email"]).out)
+			identity.push("-c", "user.email=thinkrail@localhost");
+		const commit = git(path, [...identity, "commit", "--allow-empty", "-m", "Initial commit"]);
+		if (!commit.ok) throw new Error(`git commit failed: ${path}`);
+	} catch (err) {
+		rmSync(join(path, ".git"), { recursive: true, force: true });
+		throw err;
+	}
+}

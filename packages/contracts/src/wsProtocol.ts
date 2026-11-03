@@ -1,0 +1,1333 @@
+import type {
+	AppConfig,
+	AppConfigUpdate,
+	AppSurvey,
+	BackgroundCommandCompletionDetails,
+	BackgroundCommandOutputResult,
+	BranchList,
+	BranchStatus,
+	ChangeReceipt,
+	CompletionDelivery,
+	DelegationRunStatus,
+	DetectedAccount,
+	DiffStats,
+	EditorInfo,
+	ExistingWorktreeCandidate,
+	ExtensionCatalogEntry,
+	FileNode,
+	GitCommit,
+	GitDiffScope,
+	GithubAuthStatus,
+	GitStatus,
+	HistoryScope,
+	HistorySearchResult,
+	HostEnvironment,
+	HostEnvironmentStatus,
+	HostEnvironmentUpdateResult,
+	InstalledFontsResult,
+	JbcentralActionResult,
+	JbcentralConnectResult,
+	JbcentralLoginResult,
+	JbcentralQuotaSnapshot,
+	LocalLocalesSnapshot,
+	LoginReply,
+	McpExposure,
+	McpListResult,
+	McpReadOutputResult,
+	McpServerEntryInput,
+	McpServerLog,
+	McpServerScope,
+	McpStatusSnapshot,
+	MergeMethod,
+	MergePrResult,
+	OpenBranchReview,
+	OpenPrResult,
+	PiPackageResourceType,
+	PiPackageScope,
+	PiPackageSummary,
+	PiPackagesCatalog,
+	PrBodySource,
+	Project,
+	ProjectPathStatus,
+	ProjectTrustSummary,
+	ProviderStatusReport,
+	ProviderWarning,
+	PrPreview,
+	ResourceHistoryCursor,
+	ResourceHistoryPage,
+	ResourceKind,
+	ResourceMeta,
+	RevertTarget,
+	ReviewAnchor,
+	ReviewComment,
+	ReviewCommentKind,
+	ReviewCommentStatus,
+	ReviewFixDetails,
+	ReviewSnapshot,
+	SessionResources,
+	SessionStateRecord,
+	SpecGraphSnapshot,
+	SubagentCompletionDetails,
+	SubagentOverride,
+	SurveyInvitationResponse,
+	SurveySubmitParams,
+	Template,
+	TemplateInfo,
+	TemplateScope,
+	TodoItem,
+	TodoPlan,
+	TodoStatus,
+	TurnChangeSet,
+	UserFontsSnapshot,
+	UserThemesSnapshot,
+	Workspace,
+} from "./domain";
+import { isDelegationRunDetails } from "./domain";
+import type {
+	ExtUiResponse,
+	ImageContent,
+	QueueLane,
+	RefreshedModels,
+	RemovedQueuedMessage,
+	SessionQueueContent,
+	SessionStats,
+	SessionSummary,
+	SkillCatalogEntry,
+	SlashCommandInfo,
+	ThinkingLevel,
+	ToolResponseDetails,
+	ToolResponsePendingDetails,
+	TranscriptMessage,
+	WireCustomMessage,
+	WireModel,
+} from "./piProtocol";
+
+export interface TerminalDataPush {
+	id: string;
+	data: string;
+	truncated?: boolean;
+}
+
+export interface TerminalExitPush {
+	id: string;
+	exitCode: number;
+}
+
+export interface TerminalDetachedPush {
+	workspaceId: string;
+	tabKey: string;
+}
+
+export const INITIAL_TERMINAL_TAB_KEY = "thinkrail-initial";
+
+export interface TerminalTabInfo {
+	tabKey: string;
+	title: string;
+}
+
+export interface TerminalTabsPush {
+	workspaceId: string;
+	tabs: TerminalTabInfo[];
+}
+
+export type TemplateReadLocation =
+	| { workspaceId: string; projectId?: never }
+	| { projectId: string; workspaceId?: never }
+	| { workspaceId?: never; projectId?: never };
+
+export const PROTOCOL_VERSION = 103;
+export const FS_MUTATIONS_PROTOCOL_VERSION = 103;
+export const FONTS_PROTOCOL_VERSION = 102;
+export const CUSTOM_ENDPOINTS_PROTOCOL_VERSION = 101;
+export const PI_PACKAGES_PROTOCOL_VERSION = 100;
+export const PROVIDER_WARNINGS_PROTOCOL_VERSION = 99;
+export const SURVEY_TRANSLATIONS_PROTOCOL_VERSION = 98;
+export const RESOURCE_HISTORY_PROTOCOL_VERSION = 96;
+export const PROJECT_CLONE_PROTOCOL_VERSION = 95;
+export const ONBOARDING_PROTOCOL_VERSION = 94;
+export const LAYOUT_PLAN_PRESET_PROTOCOL_VERSION = 94;
+export const TOOL_RESPONSE_PROTOCOL_VERSION = 93;
+export const USER_THEMES_PROTOCOL_VERSION = 92;
+export const HOST_ENVIRONMENT_PROTOCOL_VERSION = 91;
+export const CLIENT_ERROR_REPORT_PROTOCOL_VERSION = 90;
+export const LOCALES_PROTOCOL_VERSION = 89;
+export const REVIEW_ACTIONS_PROTOCOL_VERSION = 88;
+export const BRANCH_STATUS_PROTOCOL_VERSION = 87;
+export const WORKSPACE_READ_STATE_PROTOCOL_VERSION = 86;
+export const PROJECT_RENAME_PROTOCOL_VERSION = 85;
+export const MCP_TOOL_GRANTS_PROTOCOL_VERSION = 84;
+export const MCP_PROTOCOL_VERSION = 83;
+export const EXTENSION_CATALOG_PROTOCOL_VERSION = 82;
+export const PROJECT_TRUST_PROTOCOL_VERSION = 81;
+export const TURN_CHANGES_PROTOCOL_VERSION = 80;
+export const SUBAGENT_CONCURRENCY_PROTOCOL_VERSION = 79;
+export const WORKSPACE_SETTLE_PROTOCOL_VERSION = 78;
+export const MODEL_PICKER_PROTOCOL_VERSION = 77;
+export const CONTEXT_WINDOW_SETTINGS_PROTOCOL_VERSION = 76;
+export const CHANGE_MUTATIONS_PROTOCOL_VERSION = 75;
+export const RESOURCE_META_PROTOCOL_VERSION = 75;
+export const REVIEW_RICH_ANCHORS_PROTOCOL_VERSION = 74;
+export const DEFAULT_MODEL_PROTOCOL_VERSION = 72;
+export const CHAT_RESOURCES_PROTOCOL_VERSION = 71;
+export const HOST_UPDATE_RUN_PROTOCOL_VERSION = 70;
+export const PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION = 67;
+export const AGENT_REVIEW_SETTING_PROTOCOL_VERSION = 68;
+export const PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION = 69;
+export const SESSION_STATE_PROTOCOL_VERSION = 73;
+export const ANALYTICS_CONSENT_PROTOCOL_VERSION = 65;
+export const SESSION_RENAME_PROTOCOL_VERSION = 66;
+export const SESSION_TITLE_MAX_LENGTH = 80;
+
+export function normalizeSessionTitle(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const title = value.replace(/[\r\n]+/g, " ").trim();
+	return title.length > 0 && title.length <= SESSION_TITLE_MAX_LENGTH ? title : null;
+}
+
+export const WINDOWS_SHELL_SETTINGS_PROTOCOL_VERSION = 62;
+export const PROJECT_TEMPLATE_PREVIEW_PROTOCOL_VERSION = 63;
+export const THEME_SYSTEM_PROTOCOL_VERSION = 58;
+export const SUBAGENT_SETTINGS_PROTOCOL_VERSION = 57;
+export const JBCENTRAL_QUOTA_PROTOCOL_VERSION = 59;
+export const WORKSPACE_RENAME_PROTOCOL_VERSION = 55;
+export const FEEDBACK_SURVEY_PROTOCOL_VERSION = 97;
+
+export type HostPlatform = "darwin" | "linux" | "win32";
+
+export type HostUpdateStatus = "available" | "running" | "succeeded" | "failed";
+
+export interface HostUpdateNotice {
+	currentVersion: string;
+	availableVersion: string;
+	channel: string;
+	status?: HostUpdateStatus;
+}
+
+export interface ServerWelcome {
+	protocolVersion: number;
+	appVersion?: string;
+	hostPlatform?: HostPlatform;
+	hostUpdate?: HostUpdateNotice;
+	projects: Project[];
+	recentProjects: Project[];
+	config: AppConfig;
+}
+
+export interface WorkspaceRemoved {
+	projectId: string;
+	id: string;
+}
+
+export type SessionCreatedPayload = SessionSummary;
+
+export interface SessionDeletedPayload {
+	workspaceId: string;
+	sessionId: string;
+}
+
+export const WS_METHODS = {
+	projectOpen: "project.open",
+	projectList: "project.list",
+	projectClose: "project.close",
+	projectRename: "project.rename",
+	projectInspect: "project.inspect",
+	projectInit: "project.init",
+	projectCreate: "project.create",
+	projectCloneDestination: "project.cloneDestination",
+	projectClone: "project.clone",
+	projectCancelClone: "project.cancelClone",
+	projectHasSpecs: "project.hasSpecs",
+	projectSetTrust: "project.setTrust",
+	projectAcknowledgeSkills: "project.acknowledgeSkills",
+	projectSetSkillEnabled: "project.setSkillEnabled",
+	projectAliasSkills: "project.aliasSkills",
+	projectTrustSummary: "project.trustSummary",
+	projectSetGroupEnabled: "project.setGroupEnabled",
+	projectSkills: "project.skills",
+	workspaceCreate: "workspace.create",
+	workspaceRename: "workspace.rename",
+	workspaceListExisting: "workspace.listExisting",
+	workspaceOpenExisting: "workspace.openExisting",
+	workspaceList: "workspace.list",
+	workspaceOpenReview: "workspace.openReview",
+	workspaceBranchStatus: "workspace.branchStatus",
+	workspacePush: "workspace.push",
+	workspaceDeleteRemoteBranch: "workspace.deleteRemoteBranch",
+	workspaceRemove: "workspace.remove",
+	workspaceDiffStats: "workspace.diffStats",
+	workspaceSetSkillOverride: "workspace.setSkillOverride",
+	workspaceSetSubagentsOverride: "workspace.setSubagentsOverride",
+	workspaceSetSubagentMaxConcurrent: "workspace.setSubagentMaxConcurrent",
+	workspaceSetDiffBase: "workspace.setDiffBase",
+	workspaceSettle: "workspace.settle",
+	workspaceUnsettle: "workspace.unsettle",
+	workspaceMarkUnread: "workspace.markUnread",
+	workspaceMarkRead: "workspace.markRead",
+	workspaceWatchReady: "workspace.watchReady",
+	workspaceOpenIn: "workspace.openIn",
+	workspaceReveal: "workspace.reveal",
+	editorList: "editor.list",
+	gitListBranches: "git.listBranches",
+	gitPrefetch: "git.prefetch",
+	githubAuthStatus: "github.authStatus",
+	githubRefresh: "github.refresh",
+	prPreview: "pr.preview",
+	prOpen: "pr.open",
+	prGenerate: "pr.generate",
+	prReady: "pr.ready",
+	prMerge: "pr.merge",
+	prReopen: "pr.reopen",
+	fsReadDir: "fs.readDir",
+	fsReadFile: "fs.readFile",
+	fsWriteFile: "fs.writeFile",
+	fsMkdir: "fs.mkdir",
+	specGraph: "spec.graph",
+	todoList: "todo.list",
+	todoAdd: "todo.add",
+	todoUpdate: "todo.update",
+	todoRemove: "todo.remove",
+	todoReview: "todo.review",
+	todoRequestFix: "todo.requestFix",
+	todoStartReview: "todo.startReview",
+	todoReviewAll: "todo.reviewAll",
+	todoGenerateSummary: "todo.generateSummary",
+	gitStatus: "git.status",
+	gitDiffFile: "git.diffFile",
+	gitListCommits: "git.listCommits",
+	workspaceTurns: "workspace.turns",
+	changeRevert: "change.revert",
+	changeUndo: "change.undo",
+	terminalReserve: "terminal.reserve",
+	terminalAttach: "terminal.attach",
+	terminalList: "terminal.list",
+	terminalWrite: "terminal.write",
+	terminalResize: "terminal.resize",
+	terminalClose: "terminal.close",
+	dialogSelectDirectory: "dialog.selectDirectory",
+	skillList: "skill.list",
+	skillsState: "skills.state",
+	extensionList: "extension.list",
+	packagesList: "packages.list",
+	packagesInstall: "packages.install",
+	packagesRemove: "packages.remove",
+	packagesUpdate: "packages.update",
+	packagesCheckUpdates: "packages.checkUpdates",
+	packagesSetResourceEnabled: "packages.setResourceEnabled",
+	packagesReveal: "packages.reveal",
+	localesList: "locales.list",
+	localesReveal: "locales.reveal",
+	themesList: "themes.list",
+	themesReveal: "themes.reveal",
+	fontsList: "fonts.list",
+	fontsInstalled: "fonts.installed",
+	fontsReveal: "fonts.reveal",
+	sessionCreate: "session.create",
+	sessionPrompt: "session.prompt",
+	sessionSteer: "session.steer",
+	sessionFollowUp: "session.followUp",
+	sessionClearQueue: "session.clearQueue",
+	sessionRemoveQueued: "session.removeQueued",
+	sessionAbort: "session.abort",
+	sessionDispose: "session.dispose",
+	sessionDelete: "session.delete",
+	sessionRename: "session.rename",
+	sessionSetModel: "session.setModel",
+	sessionSetThinkingLevel: "session.setThinkingLevel",
+	sessionCompact: "session.compact",
+	sessionGetStats: "session.getStats",
+	sessionGetCommands: "session.getCommands",
+	sessionReloadResources: "session.reloadResources",
+	sessionExtUiReply: "session.extUiReply",
+	sessionRespondToTool: "session.respondToTool",
+	sessionAnswerQuestion: "session.answerQuestion",
+	sessionList: "session.list",
+	sessionStateList: "session.stateList",
+	sessionAcknowledgeCompletion: "session.acknowledgeCompletion",
+	sessionNudge: "session.nudge",
+	sessionActivityList: "session.activityList",
+	sessionGetMessages: "session.getMessages",
+	subagentGetTranscript: "subagent.getTranscript",
+	sessionResources: "session.resources",
+	sessionResourceHistory: "session.resourceHistory",
+	backgroundCommandOutput: "backgroundCommand.output",
+	backgroundCommandStop: "backgroundCommand.stop",
+	subagentStop: "subagent.stop",
+	subagentStopAll: "subagent.stopAll",
+	modelList: "model.list",
+	modelRefresh: "model.refresh",
+	modelDefault: "model.default",
+	modelContextSettings: "model.contextSettings",
+	modelSetContextWindow: "model.setContextWindow",
+	customEndpointsList: "customEndpoints.list",
+	customEndpointsProbe: "customEndpoints.probe",
+	customEndpointsSave: "customEndpoints.save",
+	customEndpointsRemove: "customEndpoints.remove",
+	modelClampThinking: "model.clampThinking",
+	providerStatus: "provider.status",
+	providerDetect: "provider.detect",
+	providerLoginStart: "provider.loginStart",
+	providerLoginReply: "provider.loginReply",
+	providerLoginCancel: "provider.loginCancel",
+	providerLogout: "provider.logout",
+	providerDisableWarning: "provider.disableWarning",
+	providerJbcentralConnect: "provider.jbcentralConnect",
+	providerJbcentralDisconnect: "provider.jbcentralDisconnect",
+	providerJbcentralStartProxy: "provider.jbcentralStartProxy",
+	providerJbcentralLogin: "provider.jbcentralLogin",
+	providerJbcentralUpdate: "provider.jbcentralUpdate",
+	providerJbcentralQuota: "provider.jbcentralQuota",
+	hostUpdate: "host.update",
+	settingsUpdate: "settings.update",
+	environmentGet: "environment.get",
+	environmentUpdate: "environment.update",
+	feedbackRespond: "feedback.respond",
+	feedbackSurvey: "feedback.survey",
+	feedbackSurveySubmit: "feedback.survey.submit",
+	clientReportError: "client.reportError",
+	historySearch: "history.search",
+	virtuaiConversationGet: "virtuai.conversation.get",
+	virtuaiConversationDelete: "virtuai.conversation.delete",
+	reviewGet: "review.get",
+	reviewCommentAdd: "review.commentAdd",
+	reviewCommentUpdate: "review.commentUpdate",
+	reviewCommentDelete: "review.commentDelete",
+	reviewFileDone: "review.fileDone",
+	reviewSendComment: "review.sendComment",
+	reviewSendBatch: "review.sendBatch",
+	reviewClose: "review.close",
+	templateList: "template.list",
+	templateGet: "template.get",
+	templateSave: "template.save",
+	templateDelete: "template.delete",
+	mcpList: "mcp.list",
+	mcpAdd: "mcp.add",
+	mcpUpdate: "mcp.update",
+	mcpRemove: "mcp.remove",
+	mcpSetProjectOverride: "mcp.setProjectOverride",
+	mcpSetSessionOverride: "mcp.setSessionOverride",
+	mcpApprove: "mcp.approve",
+	mcpRevokeToolGrant: "mcp.revokeToolGrant",
+	mcpShareWithRepo: "mcp.shareWithRepo",
+	mcpLogin: "mcp.login",
+	mcpLogout: "mcp.logout",
+	mcpTestConnection: "mcp.testConnection",
+	mcpReconnect: "mcp.reconnect",
+	mcpReadOutput: "mcp.readOutput",
+	mcpReadLog: "mcp.readLog",
+} as const;
+
+export const WS_CHANNELS = {
+	serverWelcome: "server.welcome",
+	projectUpdated: "project.updated",
+	piEvent: "pi.event",
+	piExtensionUi: "pi.extensionUi",
+	sessionCreated: "session.created",
+	sessionDeleted: "session.deleted",
+	sessionResourcesChanged: "session.resourcesChanged",
+	sessionState: "session.state",
+	providerLogin: "provider.login",
+	providerChanged: "provider.changed",
+	terminalData: "terminal.data",
+	terminalExit: "terminal.exit",
+	terminalDetached: "terminal.detached",
+	terminalTabs: "terminal.tabs",
+	workspaceCreated: "workspace.created",
+	workspaceUpdated: "workspace.updated",
+	workspaceRemoved: "workspace.removed",
+	workspaceFsChanged: "workspace.fsChanged",
+	settingsChanged: "settings.changed",
+	hostUpdateAvailable: "host.updateAvailable",
+	feedbackInterview: "feedback.interview",
+	reviewChanged: "review.changed",
+	reviewFailed: "review.failed",
+	turnChanged: "turn.changed",
+	mcpStatus: "mcp.status",
+	localesChanged: "locales.changed",
+	themesChanged: "themes.changed",
+	packagesChanged: "packages.changed",
+	fontsChanged: "fonts.changed",
+} as const;
+
+type SameUnion<A extends B, B extends C, C = A> = A;
+export type WsChannel = (typeof WS_CHANNELS)[keyof typeof WS_CHANNELS];
+
+export const TOOL_RESPONSE_CUSTOM_TYPE = "tool-response";
+const LEGACY_ASK_ANSWERS_CUSTOM_TYPE = "ask-user-answers";
+
+export interface ToolResponseMessage extends WireCustomMessage<ToolResponseDetails> {
+	customType: typeof TOOL_RESPONSE_CUSTOM_TYPE;
+	details: ToolResponseDetails;
+}
+
+export function isToolResponsePending(details: unknown): details is ToolResponsePendingDetails {
+	return (
+		!!details &&
+		typeof details === "object" &&
+		(details as ToolResponsePendingDetails).kind === "ack"
+	);
+}
+
+export function readToolResponseMessage(message: unknown): ToolResponseDetails | null {
+	if (!message || typeof message !== "object") return null;
+	const m = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (m.role !== "custom" || !m.details || typeof m.details !== "object") return null;
+	const details = m.details as { toolCallId?: unknown; response?: unknown; result?: unknown };
+	if (typeof details.toolCallId !== "string") return null;
+	if (m.customType === TOOL_RESPONSE_CUSTOM_TYPE && "response" in details)
+		return { toolCallId: details.toolCallId, response: details.response };
+	if (m.customType === LEGACY_ASK_ANSWERS_CUSTOM_TYPE && details.result !== undefined)
+		return { toolCallId: details.toolCallId, response: details.result };
+	return null;
+}
+
+export const SUBAGENT_COMPLETION_CUSTOM_TYPE = "subagent-completion";
+
+export interface SubagentCompletionMessage extends WireCustomMessage<SubagentCompletionDetails> {
+	customType: typeof SUBAGENT_COMPLETION_CUSTOM_TYPE;
+	details: SubagentCompletionDetails;
+}
+
+export function completionDelivery(details: {
+	delivery?: unknown;
+}): CompletionDelivery | undefined {
+	const { delivery } = details;
+	return delivery === "wake" || delivery === "run" || delivery === "appended"
+		? delivery
+		: undefined;
+}
+
+export function isSubagentCompletionMessage(
+	message: unknown,
+): message is SubagentCompletionMessage {
+	if (!message || typeof message !== "object") return false;
+	const m = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (m.role !== "custom" || m.customType !== SUBAGENT_COMPLETION_CUSTOM_TYPE) return false;
+	return isDelegationRunDetails(m.details);
+}
+
+export const TODO_REVIEW_FIX_CUSTOM_TYPE = "todo-review-fix";
+
+export interface TodoReviewFixMessage extends WireCustomMessage<ReviewFixDetails> {
+	customType: typeof TODO_REVIEW_FIX_CUSTOM_TYPE;
+	details: ReviewFixDetails;
+}
+
+export function isTodoReviewFixMessage(message: unknown): message is TodoReviewFixMessage {
+	if (!message || typeof message !== "object") return false;
+	const m = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (m.role !== "custom" || m.customType !== TODO_REVIEW_FIX_CUSTOM_TYPE) return false;
+	const details = m.details as Partial<ReviewFixDetails> | undefined;
+	return (
+		typeof details?.itemId === "string" &&
+		typeof details.itemTitle === "string" &&
+		Array.isArray(details.comments)
+	);
+}
+
+export const BACKGROUND_COMMAND_COMPLETION_CUSTOM_TYPE = "background-command-completion";
+
+export interface BackgroundCommandCompletionMessage
+	extends WireCustomMessage<BackgroundCommandCompletionDetails> {
+	customType: typeof BACKGROUND_COMMAND_COMPLETION_CUSTOM_TYPE;
+	display: true;
+	details: BackgroundCommandCompletionDetails;
+}
+
+export function isBackgroundCommandCompletionMessage(
+	message: unknown,
+): message is BackgroundCommandCompletionMessage {
+	if (!message || typeof message !== "object") return false;
+	const m = message as {
+		role?: unknown;
+		customType?: unknown;
+		display?: unknown;
+		details?: unknown;
+	};
+	if (
+		m.role !== "custom" ||
+		m.customType !== BACKGROUND_COMMAND_COMPLETION_CUSTOM_TYPE ||
+		m.display !== true
+	)
+		return false;
+	if (!m.details || typeof m.details !== "object") return false;
+	const d = m.details as Partial<BackgroundCommandCompletionDetails>;
+	if ([d.id, d.sessionId, d.name].some((field) => typeof field !== "string")) return false;
+	if (d.status !== "completed" && d.status !== "error" && d.status !== "stopped") return false;
+	if (
+		typeof d.startedAt !== "number" ||
+		!Number.isFinite(d.startedAt) ||
+		typeof d.finishedAt !== "number" ||
+		!Number.isFinite(d.finishedAt)
+	)
+		return false;
+	if (
+		d.exitCode !== undefined &&
+		d.exitCode !== null &&
+		(typeof d.exitCode !== "number" || !Number.isFinite(d.exitCode))
+	)
+		return false;
+	if (d.errorMessage !== undefined && typeof d.errorMessage !== "string") return false;
+	return !!d.output && typeof d.output.text === "string" && typeof d.output.truncated === "boolean";
+}
+
+export function customMessageText(content: WireCustomMessage["content"]): string {
+	if (typeof content === "string") return content;
+	return content
+		.filter((c): c is Extract<typeof c, { type: "text" }> => c.type === "text")
+		.map((c) => c.text)
+		.join("");
+}
+
+export type ClientErrorKind = "render" | "window" | "rejection";
+
+export interface ClientErrorReport {
+	kind: ClientErrorKind;
+	type: string;
+	stack?: string;
+	boundary?: string;
+	chunkIds?: Record<string, string>;
+}
+
+export interface Ack {
+	ok: true;
+}
+
+export interface ReviewSendResult {
+	sessionId: string;
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+	reused: boolean;
+}
+
+export interface WorkspaceWatchReadyResult {
+	startupNudge: boolean;
+}
+
+export interface ModelDefault {
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+}
+
+export const MODEL_CONTEXT_WINDOW_LIMITS = { min: 272_000, max: 1_000_000 } as const;
+
+export function isModelContextWindow(value: unknown): value is number {
+	return (
+		typeof value === "number" &&
+		Number.isSafeInteger(value) &&
+		value >= MODEL_CONTEXT_WINDOW_LIMITS.min &&
+		value <= MODEL_CONTEXT_WINDOW_LIMITS.max
+	);
+}
+
+export type ModelContextTarget = "available" | Pick<WireModel, "provider" | "id">;
+
+export interface ModelContextSetting
+	extends Pick<WireModel, "provider" | "id" | "name" | "contextWindow"> {
+	override: number | null;
+}
+
+/** Provider ids the custom-endpoint form owns in pi's `models.json`; every other provider is left alone. */
+export const CUSTOM_ENDPOINT_ID_PREFIX = "custom-";
+
+export function isCustomEndpointId(id: string): boolean {
+	return id.startsWith(CUSTOM_ENDPOINT_ID_PREFIX);
+}
+
+/** What the server reported about a model; `null` means it did not say, so pi's default applies. */
+export interface CustomEndpointModel {
+	id: string;
+	contextWindow: number | null;
+	maxTokens: number | null;
+	reasoning: boolean | null;
+	vision: boolean | null;
+	/** Whether the server says the model takes tool calls; never saved, so a listed endpoint reports null. */
+	tools: boolean | null;
+}
+
+/** An OpenAI-compatible `custom-*` provider in pi's `models.json`. The key itself never crosses the wire. */
+export interface CustomEndpoint {
+	id: string;
+	name: string;
+	baseUrl: string;
+	hasApiKey: boolean;
+	models: CustomEndpointModel[];
+}
+
+export interface CustomEndpointProbeRequest {
+	baseUrl: string;
+	/** Omitted together with `endpointId` to reuse that endpoint's saved key for its unchanged address. */
+	apiKey?: string;
+	endpointId?: string;
+}
+
+export type CustomEndpointProbeFailure =
+	| "invalid-url"
+	| "unauthorized"
+	| "timeout"
+	| "unreachable"
+	| "not-openai"
+	| "no-models";
+
+export type CustomEndpointProbe =
+	| { ok: true; baseUrl: string; models: CustomEndpointModel[] }
+	| { ok: false; reason: CustomEndpointProbeFailure; status?: number };
+
+export interface CustomEndpointDraft {
+	/** Present to replace an existing endpoint; absent to add a new one. */
+	id?: string;
+	name: string;
+	baseUrl: string;
+	/** Omitted to keep the saved key; an empty string removes it. */
+	apiKey?: string;
+	models: CustomEndpointModel[];
+}
+
+export function isSharedModelContextTarget(
+	setting: Pick<ModelContextSetting, "override">,
+): boolean {
+	return setting.override === null || isModelContextWindow(setting.override);
+}
+
+/**
+ * The entry a rewrite or removal was rendered from: its scope and the `McpServerSummary.fingerprint` the
+ * client rendered it with. The host refuses the write when the entry on disk no longer has it.
+ */
+export interface McpRenderedTarget {
+	scope: McpServerScope;
+	expectedFingerprint: string;
+}
+
+export interface WsMethodMap {
+	"project.open": { params: { path: string }; result: Project };
+	"project.list": { params: Record<string, never>; result: Project[] };
+	"project.close": { params: { id: string }; result: Ack };
+	"project.rename": { params: { id: string; name: string }; result: Project };
+	"project.inspect": { params: { path: string }; result: ProjectPathStatus };
+	"project.init": { params: { path: string }; result: Project };
+	"project.create": {
+		params: { parentPath: string; name: string; displayName?: string };
+		result: Project;
+	};
+	"project.cloneDestination": {
+		params: { parentPath: string; name: string };
+		result: { path: string };
+	};
+	"project.clone": {
+		params: { operationId: string; url: string; parentPath: string; name: string; depth?: number };
+		result: Project | null;
+	};
+	"project.cancelClone": { params: { operationId: string }; result: Ack };
+	"project.hasSpecs": { params: { projectId: string }; result: { hasSpecs: boolean } };
+	"project.setTrust": {
+		params: { id: string; trusted: boolean; resources?: boolean };
+		result: Project;
+	};
+	"project.acknowledgeSkills": { params: { id: string; names: string[] }; result: Project };
+	"project.setSkillEnabled": {
+		params: { id: string; name: string; enabled: boolean };
+		result: Project;
+	};
+	"project.aliasSkills": { params: { projectId: string }; result: string[] };
+	"project.trustSummary": { params: { projectId: string }; result: ProjectTrustSummary };
+	"project.setGroupEnabled": {
+		params: { id: string; group: string; enabled: boolean };
+		result: Project;
+	};
+	"project.skills": { params: { projectId: string }; result: SkillCatalogEntry[] };
+	"workspace.create": {
+		params: { projectId: string; name?: string; baseRef?: string };
+		result: Workspace;
+	};
+	"workspace.rename": { params: { id: string; name: string }; result: Workspace };
+	"workspace.listExisting": {
+		params: { projectId: string };
+		result: ExistingWorktreeCandidate[];
+	};
+	"workspace.openExisting": {
+		params: { projectId: string; path: string };
+		result: Workspace;
+	};
+	"workspace.list": {
+		params: { projectId: string; includeDiffStats?: boolean };
+		result: Workspace[];
+	};
+	"workspace.openReview": {
+		params: { workspaceId: string; allowCached?: boolean };
+		result: OpenBranchReview | null;
+	};
+	"workspace.branchStatus": {
+		params: { workspaceId: string; allowCached?: boolean; skipFetch?: boolean };
+		result: BranchStatus;
+	};
+	"workspace.push": {
+		params: { workspaceId: string; branch: string; confirmBase?: boolean };
+		result: { dirtyFiles: number };
+	};
+	"workspace.deleteRemoteBranch": {
+		params: { workspaceId: string; branch: string };
+		result: Ack;
+	};
+	"workspace.remove": { params: { id: string }; result: Ack };
+	"workspace.diffStats": { params: { id: string }; result: DiffStats };
+	"workspace.setSkillOverride": {
+		params: { id: string; name: string; override: "on" | "off" | null };
+		result: Workspace;
+	};
+	"workspace.setSubagentsOverride": {
+		params: { id: string; override: SubagentOverride | null };
+		result: Workspace;
+	};
+	"workspace.setSubagentMaxConcurrent": {
+		params: { id: string; value: number | null };
+		result: Workspace;
+	};
+	"workspace.setDiffBase": { params: { id: string; ref: string | null }; result: Workspace };
+	"workspace.settle": { params: { id: string }; result: Workspace };
+	"workspace.unsettle": { params: { id: string }; result: Workspace };
+	"workspace.markUnread": { params: { id: string }; result: { record: SessionStateRecord | null } };
+	"workspace.markRead": { params: { id: string }; result: { records: SessionStateRecord[] } };
+	"workspace.watchReady": {
+		params: { workspaceId: string; prewarm?: boolean };
+		result: WorkspaceWatchReadyResult;
+	};
+	"workspace.openIn": { params: { id: string; editor: string }; result: Ack };
+	"workspace.reveal": { params: { id: string }; result: Ack };
+	"editor.list": { params: Record<string, never>; result: EditorInfo[] };
+	"git.listBranches": { params: { projectId: string }; result: BranchList };
+	"git.prefetch": { params: { projectId: string; ref: string }; result: { ok: boolean } };
+	"github.authStatus": { params: Record<string, never>; result: GithubAuthStatus };
+	"github.refresh": { params: Record<string, never>; result: GithubAuthStatus };
+	"pr.preview": {
+		params: {
+			workspaceId: string;
+			sessionId?: string;
+			title?: string;
+			source?: PrBodySource;
+			template?: string;
+		};
+		result: PrPreview;
+	};
+	"pr.generate": {
+		params: { workspaceId: string; sessionId?: string; template?: string };
+		result: { body: string | null };
+	};
+	"pr.ready": {
+		params: { workspaceId: string; branch: string; number: number };
+		result: Ack;
+	};
+	"pr.merge": {
+		params: {
+			workspaceId: string;
+			branch: string;
+			number: number;
+			method: MergeMethod;
+			deleteBranch: boolean;
+		};
+		result: MergePrResult;
+	};
+	"pr.reopen": {
+		params: { workspaceId: string; branch: string; number: number };
+		result: Ack;
+	};
+	"pr.open": {
+		params: {
+			workspaceId: string;
+			sessionId?: string;
+			branch?: string;
+			title?: string;
+			titleEdited?: boolean;
+			body?: string;
+			draft?: boolean;
+			source?: "plan_page";
+		};
+		result: OpenPrResult;
+	};
+	"fs.readDir": { params: { workspaceId: string; path: string }; result: FileNode[] };
+	"fs.readFile": {
+		params: { workspaceId: string; path: string };
+		result: { content: string; meta: ResourceMeta };
+	};
+	"fs.writeFile": {
+		params: { workspaceId: string; path: string; content: string };
+		result: { content: string; meta: ResourceMeta };
+	};
+	"fs.mkdir": { params: { workspaceId: string; path: string }; result: { path: string } };
+	"spec.graph": { params: { workspaceId: string }; result: SpecGraphSnapshot };
+	"todo.list": {
+		params: { workspaceId: string; sessionId: string; opened?: "page" | "rail" };
+		result: TodoPlan;
+	};
+	"todo.add": {
+		params: {
+			workspaceId: string;
+			sessionId: string;
+			title: string;
+			note?: string;
+			surface?: "chat" | "page" | "rail";
+		};
+		result: TodoItem;
+	};
+	"todo.update": {
+		params: {
+			workspaceId: string;
+			sessionId: string;
+			id: string;
+			status?: TodoStatus;
+			title?: string;
+			note?: string;
+		};
+		result: TodoItem;
+	};
+	"todo.remove": { params: { workspaceId: string; sessionId: string; id: string }; result: Ack };
+	"todo.review": { params: { workspaceId: string; sessionId: string; id: string }; result: Ack };
+	"todo.requestFix": {
+		params: { workspaceId: string; sessionId: string; id: string; feedback: string };
+		result: Ack;
+	};
+	"todo.startReview": {
+		params: { workspaceId: string; sessionId: string; id: string };
+		result: { ok: true };
+	};
+	"todo.reviewAll": {
+		params: { workspaceId: string; sessionId: string };
+		result: { ok: true; total: number; alreadyRunning?: true };
+	};
+	"todo.generateSummary": {
+		params: { workspaceId: string; sessionId: string };
+		result: { summary: string | null };
+	};
+	"git.status": { params: { workspaceId: string; scope?: GitDiffScope }; result: GitStatus };
+	"git.diffFile": {
+		params: { workspaceId: string; path: string; scope?: GitDiffScope };
+		result: {
+			original: string;
+			modified: string;
+			originalOid: string | null;
+			meta: { original: ResourceMeta; modified: ResourceMeta };
+		};
+	};
+	"git.listCommits": { params: { workspaceId: string }; result: { commits: GitCommit[] } };
+	"workspace.turns": { params: { workspaceId: string }; result: { turns: TurnChangeSet[] } };
+	"change.revert": {
+		params: {
+			workspaceId: string;
+			path: string;
+			scope: GitDiffScope;
+			target: RevertTarget;
+			expect: { originalHash: string | null; modifiedHash: string | null };
+		};
+		result: { receipt: ChangeReceipt };
+	};
+	"change.undo": {
+		params: { workspaceId: string; receiptId: string; expect: { modifiedHash: string | null } };
+		result: { receipt: ChangeReceipt };
+	};
+	"terminal.reserve": {
+		params: { workspaceId: string; tabKey: string; title: string };
+		result: { tab: TerminalTabInfo };
+	};
+	"terminal.attach": {
+		params: { workspaceId: string; tabKey: string; title?: string; cols?: number; rows?: number };
+		result: { id: string; created: boolean; replay?: string };
+	};
+	"terminal.list": {
+		params: { workspaceId: string };
+		result: { tabs: TerminalTabInfo[] };
+	};
+	"terminal.write": { params: { id: string; data: string }; result: Ack };
+	"terminal.resize": { params: { id: string; cols: number; rows: number }; result: Ack };
+	"terminal.close": {
+		params: { workspaceId: string; tabKey: string; force?: boolean };
+		result: { closed: boolean; busy: boolean };
+	};
+	"dialog.selectDirectory": { params: Record<string, never>; result: { path: string | null } };
+	"skill.list": { params: { projectId: string }; result: SlashCommandInfo[] };
+	"skills.state": { params: { workspaceId: string }; result: SkillCatalogEntry[] };
+	"extension.list": { params: Record<string, never>; result: ExtensionCatalogEntry[] };
+	"packages.list": { params: { workspaceId?: string }; result: PiPackagesCatalog };
+	"packages.install": {
+		params: { source: string; scope: PiPackageScope; workspaceId?: string };
+		result: PiPackageSummary;
+	};
+	"packages.remove": {
+		params: { source: string; scope: PiPackageScope; workspaceId?: string };
+		result: Ack;
+	};
+	"packages.update": {
+		params: { packages: { source: string; scope: PiPackageScope }[]; workspaceId?: string };
+		result: Ack;
+	};
+	"packages.checkUpdates": {
+		params: { workspaceId?: string; force?: boolean };
+		result: { source: string; scope: PiPackageScope }[];
+	};
+	"packages.setResourceEnabled": {
+		params: {
+			path: string;
+			type: PiPackageResourceType;
+			scope: PiPackageScope;
+			enabled: boolean;
+			workspaceId?: string;
+		};
+		result: Ack;
+	};
+	"packages.reveal": { params: { path: string; workspaceId?: string }; result: Ack };
+	"locales.list": { params: Record<string, never>; result: LocalLocalesSnapshot };
+	"locales.reveal": { params: Record<string, never>; result: Ack };
+	"themes.list": { params: Record<string, never>; result: UserThemesSnapshot };
+	"themes.reveal": { params: Record<string, never>; result: Ack };
+	"fonts.list": { params: Record<string, never>; result: UserFontsSnapshot };
+	"fonts.installed": { params: Record<string, never>; result: InstalledFontsResult };
+	"fonts.reveal": { params: Record<string, never>; result: Ack };
+	"session.create": {
+		params: { workspaceId: string; model?: WireModel; thinkingLevel?: ThinkingLevel };
+		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
+	};
+	"session.prompt": {
+		params: { sessionId: string; text: string; images?: ImageContent[] };
+		result: Ack;
+	};
+	"session.steer": {
+		params: { sessionId: string; text: string; images?: ImageContent[] };
+		result: Ack;
+	};
+	"session.followUp": {
+		params: { sessionId: string; text: string; images?: ImageContent[] };
+		result: Ack;
+	};
+	"session.clearQueue": {
+		params: { sessionId: string; requireTextOnly?: boolean };
+		result: SessionQueueContent;
+	};
+	"session.removeQueued": {
+		params: { sessionId: string; kind: QueueLane; index: number };
+		result: RemovedQueuedMessage;
+	};
+	"session.abort": {
+		params: { sessionId: string; restoreQueue?: boolean };
+		result: Ack & { restoredQueue?: SessionQueueContent };
+	};
+	"session.dispose": { params: { sessionId: string }; result: Ack };
+	"session.delete": { params: { workspaceId: string; sessionId: string }; result: Ack };
+	"session.rename": {
+		params: { workspaceId: string; sessionId: string; title: string };
+		result: Ack;
+	};
+	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
+	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
+	"session.compact": { params: { sessionId: string; instructions?: string }; result: Ack };
+	"session.getStats": { params: { sessionId: string }; result: SessionStats };
+	"session.getCommands": { params: { sessionId: string }; result: SlashCommandInfo[] };
+	"session.reloadResources": { params: { sessionId: string }; result: Ack };
+	"session.extUiReply": { params: { response: ExtUiResponse }; result: Ack };
+	"session.respondToTool": {
+		params: { sessionId: string; toolCallId: string; response: unknown };
+		result: Ack;
+	};
+	"session.answerQuestion": {
+		params: { sessionId: string; toolCallId: string; result: unknown };
+		result: Ack;
+	};
+	"session.list": { params: { workspaceId: string }; result: SessionSummary[] };
+	"session.stateList": { params: Record<string, never>; result: SessionStateRecord[] };
+	"session.acknowledgeCompletion": {
+		params: { sessionId: string; completionId: string };
+		result: { acknowledged: boolean; record: SessionStateRecord };
+	};
+	"session.nudge": {
+		params: { workspaceId: string; sessionId: string; text: string; images?: ImageContent[] };
+		result: { disposition: "needs_input" | "queued" | "prompted" };
+	};
+	"session.activityList": { params: Record<string, never>; result: [] };
+	"session.getMessages": {
+		params: { sessionId: string; workspaceId: string };
+		result: { summary: SessionSummary; messages: TranscriptMessage[] };
+	};
+	"session.resources": {
+		params: { workspaceId: string; sessionId: string };
+		result: SessionResources;
+	};
+	"session.resourceHistory": {
+		params: {
+			workspaceId: string;
+			sessionId: string;
+			kind: ResourceKind;
+			before?: ResourceHistoryCursor;
+			limit?: number;
+		};
+		result: ResourceHistoryPage;
+	};
+	"backgroundCommand.output": {
+		params: { workspaceId: string; sessionId: string; commandId: string };
+		result: BackgroundCommandOutputResult;
+	};
+	"backgroundCommand.stop": {
+		params: { workspaceId: string; sessionId: string; commandId: string };
+		result: Ack;
+	};
+	"subagent.stop": {
+		params: { workspaceId: string; parentSessionId: string; childSessionId: string };
+		result: Ack;
+	};
+	"subagent.stopAll": {
+		params: { workspaceId: string; parentSessionId: string };
+		result: Ack & { targeted: number };
+	};
+	"subagent.getTranscript": {
+		params: { workspaceId: string; parentSessionId: string; childSessionId: string };
+		result: { messages: TranscriptMessage[]; status?: DelegationRunStatus };
+	};
+	"model.list": { params: Record<string, never>; result: WireModel[] };
+	"model.clampThinking": {
+		params: { provider: string; id: string; level: ThinkingLevel };
+		result: { level: ThinkingLevel };
+	};
+	"model.refresh": { params: { force?: boolean }; result: RefreshedModels };
+	"model.default": { params: Record<string, never>; result: ModelDefault };
+	"model.contextSettings": { params: Record<string, never>; result: ModelContextSetting[] };
+	"model.setContextWindow": {
+		params: { target: ModelContextTarget; contextWindow: number | null };
+		result: ModelContextSetting[];
+	};
+	"customEndpoints.list": { params: Record<string, never>; result: CustomEndpoint[] };
+	"customEndpoints.probe": { params: CustomEndpointProbeRequest; result: CustomEndpointProbe };
+	"customEndpoints.save": { params: CustomEndpointDraft; result: CustomEndpoint[] };
+	"customEndpoints.remove": { params: { id: string }; result: CustomEndpoint[] };
+	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
+	"provider.detect": { params: Record<string, never>; result: { accounts: DetectedAccount[] } };
+	"provider.loginStart": {
+		params: { providerId: string; type?: "oauth" | "api_key" };
+		result: { loginId: string };
+	};
+	"provider.loginReply": { params: LoginReply; result: Ack };
+	"provider.loginCancel": { params: { loginId: string }; result: Ack };
+	"provider.logout": { params: { providerId: string }; result: Ack };
+	"provider.disableWarning": { params: { warning: ProviderWarning }; result: Ack };
+	"provider.jbcentralConnect": { params: Record<string, never>; result: JbcentralConnectResult };
+	"provider.jbcentralDisconnect": { params: Record<string, never>; result: JbcentralActionResult };
+	"provider.jbcentralStartProxy": { params: Record<string, never>; result: JbcentralActionResult };
+	"provider.jbcentralLogin": { params: Record<string, never>; result: JbcentralLoginResult };
+	"provider.jbcentralUpdate": { params: Record<string, never>; result: JbcentralActionResult };
+	"provider.jbcentralQuota": { params: { force?: boolean }; result: JbcentralQuotaSnapshot };
+	"host.update": { params: Record<string, never>; result: Ack };
+	"settings.update": { params: { config: AppConfigUpdate }; result: AppConfig };
+	"environment.get": { params: Record<string, never>; result: HostEnvironmentStatus };
+	"environment.update": {
+		params: { environment: HostEnvironment };
+		result: HostEnvironmentUpdateResult;
+	};
+	"feedback.respond": { params: { action: SurveyInvitationResponse }; result: Ack };
+	"feedback.survey": {
+		params: { language?: string };
+		result: { survey: AppSurvey | null };
+	};
+	"feedback.survey.submit": { params: SurveySubmitParams; result: Ack };
+	"client.reportError": { params: ClientErrorReport; result: Ack };
+	"history.search": {
+		params: { query: string; scope: HistoryScope; limit?: number };
+		result: HistorySearchResult;
+	};
+	"virtuai.conversation.get": {
+		params: {
+			sessionId: string;
+			ideSessionId: string;
+			workspaceId: string;
+		};
+		result: { messages: TranscriptMessage[] };
+	};
+	"virtuai.conversation.delete": {
+		params: { sessionId: string };
+		result: Ack;
+	};
+	"review.get": { params: { workspaceId: string }; result: ReviewSnapshot };
+	"review.commentAdd": {
+		params: {
+			workspaceId: string;
+			kind: ReviewCommentKind;
+			anchor: ReviewAnchor | null;
+			body: string;
+			scope?: GitDiffScope;
+		};
+		result: ReviewComment;
+	};
+	"review.commentUpdate": {
+		params: { workspaceId: string; id: string; body?: string; status?: ReviewCommentStatus };
+		result: ReviewComment;
+	};
+	"review.sendComment": {
+		params: {
+			workspaceId: string;
+			id: string;
+			sessionId?: string;
+			model?: WireModel;
+			thinkingLevel?: ThinkingLevel;
+		};
+		result: ReviewSendResult;
+	};
+	"review.sendBatch": {
+		params: {
+			workspaceId: string;
+			commentIds?: string[];
+			sessionId?: string;
+			model?: WireModel;
+			thinkingLevel?: ThinkingLevel;
+		};
+		result: { sessions: ReviewSendResult[] };
+	};
+	"review.commentDelete": { params: { workspaceId: string; id: string }; result: Ack };
+	"review.fileDone": { params: { workspaceId: string; path: string }; result: Ack };
+	"review.close": { params: { workspaceId: string }; result: Ack };
+	"template.list": {
+		params: TemplateReadLocation;
+		result: { templates: TemplateInfo[] };
+	};
+	"template.get": {
+		params: TemplateReadLocation & { name: string; scope?: TemplateScope };
+		result: Template;
+	};
+	"template.save": {
+		params: {
+			workspaceId?: string;
+			scope: TemplateScope;
+			name: string;
+			content: string;
+		};
+		result: Template;
+	};
+	"template.delete": {
+		params: { workspaceId?: string; scope: TemplateScope; name: string };
+		result: Ack;
+	};
+	"mcp.list": { params: { workspaceId: string }; result: McpListResult };
+	"mcp.add": {
+		params: {
+			workspaceId: string;
+			scope: McpServerScope;
+			name: string;
+			entry: McpServerEntryInput;
+		};
+		result: McpListResult;
+	};
+	"mcp.update": {
+		params: { workspaceId: string; name: string; entry: McpServerEntryInput } & McpRenderedTarget;
+		result: McpListResult;
+	};
+	"mcp.remove": {
+		params: { workspaceId: string; name: string } & McpRenderedTarget;
+		result: McpListResult;
+	};
+	"mcp.setProjectOverride": {
+		params: {
+			workspaceId: string;
+			name: string;
+			enabled?: boolean;
+			exposure?: Exclude<McpExposure, "codemode">;
+		};
+		result: McpListResult;
+	};
+	"mcp.setSessionOverride": {
+		params: { workspaceId: string; sessionId: string; name: string; enabled: boolean };
+		result: Ack;
+	};
+	"mcp.approve": {
+		params: { workspaceId: string; name: string; fingerprint: string };
+		result: McpListResult;
+	};
+	"mcp.revokeToolGrant": {
+		params: { workspaceId: string; name: string; tool: string };
+		result: McpListResult;
+	};
+	"mcp.shareWithRepo": { params: { workspaceId: string; name: string }; result: McpListResult };
+	"mcp.login": { params: { workspaceId: string; name: string }; result: { loginId: string } };
+	"mcp.logout": { params: { workspaceId: string; name: string }; result: Ack };
+	"mcp.testConnection": {
+		params: { workspaceId: string; name: string };
+		result: { loginId: string };
+	};
+	"mcp.reconnect": {
+		params: { workspaceId: string; sessionId: string; name: string };
+		result: Ack;
+	};
+	"mcp.readOutput": {
+		params: { workspaceId: string; sessionId: string; toolCallId: string };
+		result: McpReadOutputResult;
+	};
+	"mcp.readLog": { params: { workspaceId: string; name: string }; result: McpServerLog };
+}
+
+/** Payload of the `mcp.status` channel: one per-session snapshot per publish. */
+export type McpStatusPayload = McpStatusSnapshot;
+
+export type WsMethodName = SameUnion<
+	keyof WsMethodMap,
+	(typeof WS_METHODS)[keyof typeof WS_METHODS]
+>;
+export type WsParams<M extends WsMethodName> = WsMethodMap[M]["params"];
+export type WsResult<M extends WsMethodName> = WsMethodMap[M]["result"];
+
+export interface WsRequest<M extends WsMethodName = WsMethodName> {
+	id: string;
+	method: M;
+	params: WsParams<M>;
+	sessionId?: string;
+}
+
+export interface WsAck {
+	ack: string[];
+}
+
+export interface WsResume {
+	resume: string[];
+}
+
+export type WsClientMessage = WsRequest | WsAck | WsResume;
+
+export type WsErrorCode =
+	| "UNKNOWN_COMMIT"
+	| "PUSH_AUTH_FAILED"
+	| "NOT_GIT"
+	| "ALREADY_OPEN"
+	| "PROJECT_CLONE_INVALID"
+	| "PROJECT_CLONE_FAILED"
+	| "PROJECT_CLONE_CLEANUP_FAILED"
+	| "SUBAGENT_TRANSCRIPT_NOT_FOUND"
+	| "RESOURCE_UNAVAILABLE"
+	| "STALE_VIEW"
+	| "SCOPE_IMMUTABLE"
+	| "RANGE_INVALID"
+	| "RECEIPT_UNKNOWN"
+	| "UNSUPPORTED_CHANGE"
+	| "LOGIN_NOT_OWNER"
+	| "MCP_CONFIG_INVALID"
+	| "MCP_PATH_UNSAFE"
+	| "MCP_HANDLED_ELSEWHERE"
+	| "SURVEY_UNAVAILABLE"
+	| "SURVEY_CHANGED"
+	| "SURVEY_INVALID"
+	| "SURVEY_NOT_SENT"
+	| "PACKAGE_SOURCE_INVALID"
+	| "PACKAGE_OFFLINE"
+	| "PACKAGE_UNTRUSTED"
+	| "PACKAGE_UNKNOWN"
+	| "PACKAGE_INSTALL_FAILED"
+	| "PACKAGE_INSTALLED_UNLISTED"
+	| "PACKAGE_REMOVE_FAILED"
+	| "PACKAGE_UPDATE_FAILED"
+	| "PACKAGE_SETTINGS_WRITE_FAILED"
+	| "REQUEST_REPLAY_OVERFLOW"
+	| "INSTALLED_FONTS_UNAVAILABLE";
+
+export interface WsResponse {
+	id: string;
+	ok: boolean;
+	result?: unknown;
+	error?: string;
+	errorCode?: WsErrorCode;
+}
+
+export interface WsPush {
+	channel: WsChannel;
+	data: unknown;
+}
+
+export type WsServerMessage = WsResponse | WsPush;
