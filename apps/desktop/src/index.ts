@@ -83,6 +83,7 @@ import {
 	writeVirtuaiSavedAgentId,
 	clearVirtuaiAccount,
 	virtuaiAdminUrl,
+	virtuaiAgentsUrl,
 	virtuaiAuthUrl,
 	virtuaiMcpUrl,
 	virtuaiSkillsUrl,
@@ -365,6 +366,10 @@ async function start(): Promise<void> {
 	const openVirtuaiMcp = () => {
 		if (!virtuaiServer) return;
 		openVirtuaiPage(virtuaiMcpUrl(virtuaiServer));
+	};
+	const openVirtuaiAgents = () => {
+		if (!virtuaiServer) return;
+		openVirtuaiPage(virtuaiAgentsUrl(virtuaiServer));
 	};
 	if (virtuaiServer && !neutral && process.env.THINKRAIL_DESKTOP_HIDDEN !== "1") {
 		await waitForVirtuaiLogin({
@@ -680,6 +685,9 @@ async function start(): Promise<void> {
 				},
 				openVirtuaiMcp: () => {
 					openVirtuaiMcp();
+				},
+				openVirtuaiAgents: () => {
+					openVirtuaiAgents();
 				},
 				menuLabelsChanged: ({ labels }) => {
 					const menuLabels = readMenuLabels(labels);

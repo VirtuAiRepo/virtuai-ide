@@ -151,6 +151,9 @@ Object.defineProperty(globals, "__VIRTUAI_DESKTOP__", {
 		openMcp: () => {
 			electroview.rpc?.send.openVirtuaiMcp();
 		},
+		openAgents: () => {
+			electroview.rpc?.send.openVirtuaiAgents();
+		},
 		listAgents: () => rpc.request.listVirtuaiAgents(),
 		selectAgent: (agentId: string) => rpc.request.selectVirtuaiAgent({ agentId }),
 		getServer: () => rpc.request.getVirtuaiServer(),

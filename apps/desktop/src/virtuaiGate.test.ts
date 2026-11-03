@@ -9,6 +9,7 @@ import {
 	writeVirtuaiSavedAgentId,
 	clearVirtuaiAccount,
 	virtuaiAdminUrl,
+	virtuaiAgentsUrl,
 	virtuaiAuthUrl,
 	virtuaiMcpUrl,
 	virtuaiSkillsUrl,
@@ -110,6 +111,7 @@ test("auth is the server root and settings is the admin page", () => {
 	expect(virtuaiAuthUrl("https://dev.imvirtuai.com")).toBe("https://dev.imvirtuai.com/");
 	expect(virtuaiAdminUrl("https://dev.imvirtuai.com")).toBe("https://dev.imvirtuai.com/settings");
 	expect(virtuaiSkillsUrl("https://dev.imvirtuai.com")).toBe("https://dev.imvirtuai.com/skills");
+	expect(virtuaiAgentsUrl("https://dev.imvirtuai.com")).toBe("https://dev.imvirtuai.com/agents");
 	expect(virtuaiMcpUrl("https://dev.imvirtuai.com")).toBe("https://dev.imvirtuai.com/mcp-servers");
 });
 

@@ -119,7 +119,8 @@ jobs:
             --sign "$APPLE_SIGNING_IDENTITY" "$app"
           codesign --verify --deep --strict "$app"
           dmg="$RUNNER_TEMP/VirtuAI-${version}-macos-arm64.dmg"
-          hdiutil create -volname "VirtuAI" -srcfolder "$app" -ov -format UDZO "$dmg"
+          chmod +x scripts/make-macos-installer-dmg.sh
+          scripts/make-macos-installer-dmg.sh "$app" "$dmg" "VirtuAI"
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
           xcrun notarytool submit "$dmg" \
             --key "$APPLE_API_KEY_PATH" \
@@ -138,3 +139,25 @@ jobs:
           files: ${{ env.DMG }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+      # Electrobun Updater reads {baseUrl}/{channel}-{os}-{arch}-update.json
+      # (release.baseUrl → …/releases/download/desktop-updates).
+      - name: Publish updater feed (desktop-updates)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          manifest="$(find apps/desktop/artifacts -name 'stable-macos-arm64-update.json' | head -1)"
+          archive="$(find apps/desktop/artifacts -name 'stable-macos-arm64-VirtuAI.app.tar.zst' | head -1)"
+          if [ -z "$manifest" ] || [ -z "$archive" ]; then
+            echo "stable update artifacts missing under apps/desktop/artifacts" >&2
+            ls -la apps/desktop/artifacts >&2 || true
+            exit 1
+          fi
+          if gh release view desktop-updates >/dev/null 2>&1; then
+            gh release upload desktop-updates "$manifest" "$archive" --clobber
+          else
+            gh release create desktop-updates "$manifest" "$archive" \
+              --title "Electrobun update feed" \
+              --notes "Stable/canary updater manifests and archives for VirtuAI IDE. Not a user-facing installer — use the v* release DMGs."
+          fi

@@ -14,7 +14,11 @@ interface AgentList {
 interface DesktopBridge {
 	listAgents?: () => Promise<AgentList>;
 	selectAgent?: (agentId: string) => Promise<void> | void;
+	openAgents?: () => void;
 }
+
+/** Sentinel select value — not an agent id. */
+const MANAGE_AGENTS = "__virtuai_manage_agents__";
 
 function desktopBridge(): DesktopBridge | null {
 	const value = Reflect.get(globalThis, "__VIRTUAI_DESKTOP__");
@@ -52,6 +56,12 @@ export function VirtuaiAgentPicker() {
 			value={selected}
 			onChange={(event) => {
 				const agentId = event.target.value;
+				if (agentId === MANAGE_AGENTS) {
+					// Keep the previous agent selected in the control.
+					event.target.value = selected;
+					bridge.openAgents?.();
+					return;
+				}
 				setSelected(agentId);
 				void bridge.selectAgent?.(agentId);
 			}}
@@ -61,6 +71,9 @@ export function VirtuaiAgentPicker() {
 					{agent.name}
 				</option>
 			))}
+			{bridge.openAgents ? (
+				<option value={MANAGE_AGENTS}>{t("chat.agent.manage")}</option>
+			) : null}
 		</select>
 	);
 }

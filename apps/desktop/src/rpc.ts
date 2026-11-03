@@ -46,6 +46,7 @@ export type DesktopRpc = {
 			menuLabelsChanged: { labels: Record<string, string> };
 			openVirtuaiSkills: undefined;
 			openVirtuaiMcp: undefined;
+			openVirtuaiAgents: undefined;
 		};
 	};
 	webview: {

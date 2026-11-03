@@ -181,6 +181,10 @@ export function virtuaiMcpUrl(origin: string): string {
 	return `${origin}/mcp-servers`;
 }
 
+export function virtuaiAgentsUrl(origin: string): string {
+	return `${origin}/agents`;
+}
+
 export const VIRTUAI_CREDENTIALS_TYPE = "virtuai-credentials";
 
 export const VIRTUAI_CREDENTIALS_SCRIPT = `(() => {

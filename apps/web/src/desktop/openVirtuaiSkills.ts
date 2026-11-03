@@ -18,3 +18,8 @@ export function openVirtuaiSkills(): boolean {
 export function openVirtuaiMcp(): boolean {
 	return callBridge("openMcp");
 }
+
+/** The desktop app opens VirtuAI's agents page in the console session window. */
+export function openVirtuaiAgents(): boolean {
+	return callBridge("openAgents");
+}

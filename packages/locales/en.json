@@ -127,6 +127,7 @@
 	"chat.activity.thinkingStep": "thinking",
 	"chat.activity.working": "Working…",
 	"chat.agent.label": "Agent",
+	"chat.agent.manage": "Manage agents…",
 	"chat.alpha.badge": "Alpha",
 	"chat.alpha.badgeTitle": "Alpha — VirtuAI tenant; Plan, Specs and Review are best-effort",
 	"chat.attention.announcement": "Your input is needed — the agent is waiting.",

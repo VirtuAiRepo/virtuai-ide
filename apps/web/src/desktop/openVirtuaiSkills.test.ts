@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { openVirtuaiMcp, openVirtuaiSkills } from "./openVirtuaiSkills";
+import { openVirtuaiAgents, openVirtuaiMcp, openVirtuaiSkills } from "./openVirtuaiSkills";
 
 test("without the desktop bridge, skills stay in the local dialog", () => {
 	Reflect.deleteProperty(globalThis, "__VIRTUAI_DESKTOP__");
@@ -27,6 +27,18 @@ test("the desktop bridge opens VirtuAI's MCP servers page", () => {
 	});
 	expect(openVirtuaiMcp()).toBe(true);
 	expect(openVirtuaiSkills()).toBe(false);
+	expect(opened).toBe(1);
+	Reflect.deleteProperty(globalThis, "__VIRTUAI_DESKTOP__");
+});
+
+test("the desktop bridge opens VirtuAI's agents page", () => {
+	let opened = 0;
+	Reflect.set(globalThis, "__VIRTUAI_DESKTOP__", {
+		openAgents: () => {
+			opened += 1;
+		},
+	});
+	expect(openVirtuaiAgents()).toBe(true);
 	expect(opened).toBe(1);
 	Reflect.deleteProperty(globalThis, "__VIRTUAI_DESKTOP__");
 });
