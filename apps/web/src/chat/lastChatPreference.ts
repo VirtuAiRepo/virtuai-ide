@@ -33,6 +33,7 @@ export function preferLastChatSession<T extends { sessionId: string }>(
 	const index = summaries.findIndex((summary) => summary.sessionId === lastSessionId);
 	if (index <= 0) return [...summaries];
 	const next = [...summaries];
-	const [hit] = next.splice(index, 1);
+	const hit = next.splice(index, 1)[0];
+	if (!hit) return [...summaries];
 	return [hit, ...next];
 }
