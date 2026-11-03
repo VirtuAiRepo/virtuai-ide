@@ -101,6 +101,7 @@ export {
 	preparePiRuntimeGeneration,
 	settledAvailableModels,
 } from "./piRuntime";
+export { completionsSessionId, planSessionId, planStoreRel } from "./planSession";
 export { piTrustsProjectPath, projectTrustSummary } from "./projectTrust";
 export { describeProviderAuth, type ProviderAuthFacts } from "./providerAuth";
 export {
@@ -131,4 +132,9 @@ export {
 	type TitleToolHost,
 } from "./titleTool";
 export * from "./toolResponses";
+export {
+	bindVirtuaiConversation,
+	clearVirtuaiConversationBindings,
+	virtuaiConversationFor,
+} from "./virtuaiHistory";
 export * from "./webUiContext";

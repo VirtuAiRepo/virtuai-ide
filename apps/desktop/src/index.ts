@@ -58,6 +58,29 @@ import {
 	readPendingInstallVersion,
 } from "./updates";
 import {
+	applyVirtuaiAccount,
+	clearVirtuaiAccount,
+	defaultVirtuaiServerForChannel,
+	fetchCompletionsAgentIds,
+	fetchVirtuaiAgents,
+	mintVirtuaiCliToken,
+	parseVirtuaiCredentials,
+	preferCompletionsAgents,
+	readVirtuaiSavedAgentId,
+	readVirtuaiServer,
+	VIRTUAI_CREDENTIALS_SCRIPT,
+	VIRTUAI_SERVER_CHOICES,
+	type VirtuaiAgentChoice,
+	virtuaiAdminUrl,
+	virtuaiAgentsUrl,
+	virtuaiAuthUrl,
+	virtuaiMcpUrl,
+	virtuaiSkillsUrl,
+	waitForVirtuaiLogin,
+	writeVirtuaiSavedAgentId,
+	writeVirtuaiServerOverride,
+} from "./virtuaiGate";
+import {
 	desktopWindowChrome,
 	injectInitialWindowChrome,
 	installWindowChromeGeometry,
@@ -74,29 +97,6 @@ import {
 	stampTaskbarShortcuts,
 	taskbarShortcutCandidates,
 } from "./windowsTaskbarIdentity";
-import {
-	readVirtuaiServer,
-	defaultVirtuaiServerForChannel,
-	VIRTUAI_SERVER_CHOICES,
-	writeVirtuaiServerOverride,
-	readVirtuaiSavedAgentId,
-	writeVirtuaiSavedAgentId,
-	clearVirtuaiAccount,
-	virtuaiAdminUrl,
-	virtuaiAgentsUrl,
-	virtuaiAuthUrl,
-	virtuaiMcpUrl,
-	virtuaiSkillsUrl,
-	VIRTUAI_CREDENTIALS_SCRIPT,
-	applyVirtuaiAccount,
-	fetchCompletionsAgentIds,
-	fetchVirtuaiAgents,
-	mintVirtuaiCliToken,
-	parseVirtuaiCredentials,
-	preferCompletionsAgents,
-	waitForVirtuaiLogin,
-	type VirtuaiAgentChoice,
-} from "./virtuaiGate";
 import {
 	applyWindowsWindowIcon,
 	loadWindowsIconApi,
@@ -325,10 +325,7 @@ async function start(): Promise<void> {
 		env: process.env.VIRTUAI_SERVER,
 		files: [
 			virtuaiConfigPath,
-			join(
-				homedir(),
-				"Library/Application Support/com.ucloudstore.virtuai.desktop/settings.json",
-			),
+			join(homedir(), "Library/Application Support/com.ucloudstore.virtuai.desktop/settings.json"),
 		],
 		readFile: readUserDataFile,
 		channelDefault: channelDefaultServer,
@@ -432,22 +429,13 @@ async function start(): Promise<void> {
 				}
 				if (cliToken) {
 					try {
-						const completionsIds = await fetchCompletionsAgentIds(
-							virtuaiServer,
-							cliToken,
-						);
+						const completionsIds = await fetchCompletionsAgentIds(virtuaiServer, cliToken);
 						virtuaiAgents = preferCompletionsAgents(virtuaiAgents, completionsIds);
 					} catch {
 						// Console list stands when Completions is unreachable.
 					}
 				}
-				applyVirtuaiAccount(
-					process.env,
-					credentials,
-					virtuaiAgents,
-					cliToken,
-					virtuaiServer,
-				);
+				applyVirtuaiAccount(process.env, credentials, virtuaiAgents, cliToken, virtuaiServer);
 				const settledAgent = process.env.VIRTUAI_AGENT_ID?.trim();
 				if (settledAgent) {
 					writeVirtuaiSavedAgentId(
@@ -591,23 +579,14 @@ async function start(): Promise<void> {
 							let agents = await fetchVirtuaiAgents(server, credentials);
 							if (cliToken) {
 								try {
-									const completionsIds = await fetchCompletionsAgentIds(
-										server,
-										cliToken,
-									);
+									const completionsIds = await fetchCompletionsAgentIds(server, cliToken);
 									agents = preferCompletionsAgents(agents, completionsIds);
 								} catch {
 									// Keep the console list when Completions is unreachable.
 								}
 							}
 							virtuaiAgents = agents;
-							applyVirtuaiAccount(
-								process.env,
-								credentials,
-								virtuaiAgents,
-								cliToken,
-								server,
-							);
+							applyVirtuaiAccount(process.env, credentials, virtuaiAgents, cliToken, server);
 							const settled = process.env.VIRTUAI_AGENT_ID?.trim();
 							if (settled) {
 								writeVirtuaiSavedAgentId(
@@ -628,13 +607,16 @@ async function start(): Promise<void> {
 				},
 				selectVirtuaiAgent: ({ agentId }): undefined => {
 					if (!virtuaiAgents.some((agent) => agent.id === agentId)) return;
+					const previous = process.env.VIRTUAI_AGENT_ID?.trim() ?? "";
 					process.env.VIRTUAI_AGENT_ID = agentId;
-					writeVirtuaiSavedAgentId(
-						virtuaiConfigPath,
-						agentId,
-						readUserDataFile,
-						writeUserDataFile,
-					);
+					writeVirtuaiSavedAgentId(virtuaiConfigPath, agentId, readUserDataFile, writeUserDataFile);
+					// Keep IDE session + Plan; drop Completions bindings so the
+					// next turn opens a conversation under the new agent.
+					if (previous && previous !== agentId) {
+						void import("@thinkrail/server/agent").then((agentApi) => {
+							agentApi.clearVirtuaiConversationBindings();
+						});
+					}
 				},
 				getVirtuaiServer: () => ({
 					server: virtuaiServer ?? channelDefaultServer,

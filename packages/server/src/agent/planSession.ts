@@ -10,7 +10,12 @@ import { virtuaiConversationFor } from "./virtuaiHistory";
  * VirtuAI web-chat conversation — that binding is only for server history.
  * Never use the Completions session id as the plan file key.
  *
+ * Agent switch (beta): changing `VIRTUAI_AGENT_ID` keeps this IDE session id
+ * and Plan file; Completions bindings are cleared so the next turn starts a
+ * new VirtuAI conversation for the new agent (`clearVirtuaiConversationBindings`).
+ *
  * @see docs/workitems/ide-virtuai-surface.md (Phase 1)
+ * @see docs/workitems/desktop-beta.md
  */
 export function planSessionId(ideSessionId: string): string {
 	return ideSessionId;

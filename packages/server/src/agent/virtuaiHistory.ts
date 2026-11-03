@@ -181,3 +181,15 @@ export function bindVirtuaiConversation(ideSessionId: string, virtuaiSessionId: 
 export function virtuaiConversationFor(ideSessionId: string): string | undefined {
 	return conversationBindings.get(ideSessionId);
 }
+
+/**
+ * Drop Completions conversation bindings (all IDE tabs).
+ *
+ * Beta agent-switch rule: keep the IDE chat + Plan file (`planSessionId`), but
+ * clear bindings so the next turn opens a **new** VirtuAI conversation under
+ * the newly selected agent. History for the previous agent stays under that
+ * agent in the history overlay.
+ */
+export function clearVirtuaiConversationBindings(): void {
+	conversationBindings.clear();
+}

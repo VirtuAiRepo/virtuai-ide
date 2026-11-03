@@ -45,11 +45,12 @@ import {
 	useSlashCommandCompletion,
 } from "@/prompt";
 import { FileChip } from "./FileChip";
-import { type ModelSelection } from "./ModelEffortPicker";
-import { VirtuaiAgentPicker } from "./VirtuaiAgentPicker";
+import type { ModelSelection } from "./ModelEffortPicker";
 import { imagePasteDropHandlers, PromptImageChips, usePromptImages } from "./promptImages";
 import type { ChatAttachment } from "./types";
 import type { ModelPreferences } from "./useModelPreferences";
+import { VirtuaiAgentPicker } from "./VirtuaiAgentPicker";
+import { shortSessionId } from "./virtuaiSessionId";
 
 export type SubmitBehavior = "send" | "steer" | "followUp" | "interrupt";
 
@@ -143,6 +144,8 @@ function highlightTint(state: SlotHighlightState): string {
 }
 
 interface ComposerProps {
+	/** IDE chat session id — Plan file key; copyable for beta bug reports. */
+	sessionId: string;
 	value: string;
 	onChange: (value: string) => void;
 	isStreaming: boolean;
@@ -184,6 +187,7 @@ export interface ComposerHandle {
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
 	{
+		sessionId,
 		value,
 		onChange,
 		isStreaming,
@@ -622,12 +626,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					</div>
 					<div className="col-start-1 row-start-2 flex min-w-0 items-center gap-8">
 						<span
-							data-testid="virtuai-alpha-badge"
-							title={t("chat.alpha.badgeTitle")}
+							data-testid="virtuai-beta-badge"
+							title={t("chat.beta.badgeTitle")}
 							className="shrink-0 text-text-muted tr-text-metadata"
 						>
-							{t("chat.alpha.badge")}
+							{t("chat.beta.badge")}
 						</span>
+						<button
+							type="button"
+							data-testid="virtuai-session-id"
+							title={t("chat.session.idTitle")}
+							aria-label={t("chat.session.copy")}
+							className="min-w-0 max-w-[140px] truncate bg-transparent text-left text-text-muted tr-text-metadata outline-none hover:text-text-default"
+							onClick={() => {
+								void navigator.clipboard.writeText(sessionId);
+							}}
+						>
+							{shortSessionId(sessionId)}
+						</button>
 						<VirtuaiAgentPicker />
 					</div>
 					<div className="col-start-3 row-start-2 flex shrink-0 items-center gap-4 self-end">

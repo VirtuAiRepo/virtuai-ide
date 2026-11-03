@@ -52,6 +52,7 @@ export function VirtuaiAgentPicker() {
 		<select
 			data-testid="virtuai-agent"
 			aria-label={t("chat.agent.label")}
+			title={t("chat.agent.switchTitle")}
 			className="max-w-[220px] truncate bg-transparent text-text-default tr-text-metadata outline-none"
 			value={selected}
 			onChange={(event) => {
@@ -71,9 +72,7 @@ export function VirtuaiAgentPicker() {
 					{agent.name}
 				</option>
 			))}
-			{bridge.openAgents ? (
-				<option value={MANAGE_AGENTS}>{t("chat.agent.manage")}</option>
-			) : null}
+			{bridge.openAgents ? <option value={MANAGE_AGENTS}>{t("chat.agent.manage")}</option> : null}
 		</select>
 	);
 }

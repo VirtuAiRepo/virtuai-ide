@@ -9,6 +9,15 @@ and is not replaced by this repo.
 Based on [ThinkRail](https://github.com/JetBrains/thinkrail) (Apache-2.0); see
 `LICENSE` and `NOTICE`.
 
+## Beta
+
+Product bar, VirtuAI **session** rules (copyable IDE session id, agent-switch
+keeps Plan / clears Completions binding), QA script, and bug template live in
+the VirtuAI monorepo: `docs/workitems/desktop-beta.md`.
+
+Composer shows a **Beta** badge and a truncated session id (click to copy).
+Plan remains local-only under `.virtuai/context/todos/<sessionId>.json`.
+
 ## Dogfood (dev)
 
 ```bash
@@ -25,10 +34,13 @@ bun run desktop:package:stable
 ```
 
 Release CI (`.github/workflows/release-desktop.yml`) builds, signs, and
-notarizes on tag `v*`. Copy Apple signing secrets from `virtuaiDesktop` into
-this repo’s Actions secrets (same names: `APPLE_CERTIFICATE`,
-`APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY_P8`, `APPLE_API_KEY`,
-`APPLE_API_ISSUER`).
+notarizes on tag `v*`. **Required before Gatekeeper-clean beta:** copy Apple
+signing secrets from `virtuaiDesktop` into this repo’s Actions secrets
+(`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY_P8`,
+`APPLE_API_KEY`, `APPLE_API_ISSUER`), then tag `v*` or run **Release desktop**.
+
+Updater feed (verified):  
+`https://github.com/VirtuAiRepo/virtuai-ide/releases/download/desktop-updates/stable-macos-arm64-update.json`
 
 ## Server
 

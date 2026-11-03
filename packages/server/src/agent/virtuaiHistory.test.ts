@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
 import {
+	bindVirtuaiConversation,
+	clearVirtuaiConversationBindings,
 	conversationToPromptHit,
 	messagesToTranscript,
 	searchVirtuaiConversations,
+	virtuaiConversationFor,
 	virtuaiHistoryAccount,
 } from "./virtuaiHistory";
 
@@ -36,14 +39,7 @@ test("searchVirtuaiConversations lists the agent conversations from the server",
 			]),
 		);
 	}) as typeof fetch;
-	const result = await searchVirtuaiConversations(
-		"auth",
-		"ws-ide",
-		"proj-1",
-		50,
-		env,
-		fetchImpl,
-	);
+	const result = await searchVirtuaiConversations("auth", "ws-ide", "proj-1", 50, env, fetchImpl);
 	expect(result.prompts).toHaveLength(1);
 	expect(result.prompts[0]).toMatchObject({
 		sessionId: "conv-1",
@@ -88,10 +84,14 @@ test("messagesToTranscript keeps user and assistant turns", () => {
 
 test("conversationToPromptHit falls back when the title is empty", () => {
 	expect(
-		conversationToPromptHit(
-			{ id: 1, session_id: "s", agent_id: "a", title: null },
-			"w",
-			undefined,
-		).text,
+		conversationToPromptHit({ id: 1, session_id: "s", agent_id: "a", title: null }, "w", undefined)
+			.text,
 	).toBe("Conversation");
+});
+
+test("clearVirtuaiConversationBindings drops Completions continuity for agent switch", () => {
+	bindVirtuaiConversation("ide-chat-1", "virtuai-conv-9");
+	expect(virtuaiConversationFor("ide-chat-1")).toBe("virtuai-conv-9");
+	clearVirtuaiConversationBindings();
+	expect(virtuaiConversationFor("ide-chat-1")).toBeUndefined();
 });

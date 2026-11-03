@@ -49,8 +49,8 @@ import {
 } from "./Composer";
 import { ExtraUsageNotice } from "./ExtraUsageNotice";
 import { mentionLookup } from "./fileTargets";
-import { messagesToRuntime } from "./hydrate";
 import { HistoryOverlay } from "./HistoryOverlay";
+import { messagesToRuntime } from "./hydrate";
 import { parseModelRef, RunModelLabel } from "./ModelEffortLabel";
 import type { ModelSelection } from "./ModelEffortPicker";
 import {
@@ -975,6 +975,7 @@ export default function ChatView({
 				/>
 				<Composer
 					ref={composerRef}
+					sessionId={sessionId}
 					value={draft}
 					onChange={(v) => useAppStore.getState().setChatDraft(sessionId, v)}
 					isStreaming={isStreaming}
