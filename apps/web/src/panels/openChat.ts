@@ -1,5 +1,6 @@
 import { t } from "@thinkrail/locales/react";
 import { messagesToRuntime } from "../chat/hydrate";
+import { setLastChatSessionId } from "../chat/lastChatPreference";
 import {
 	type CenterNavigationStamp,
 	type LayoutOpenOptions,
@@ -45,6 +46,7 @@ export async function startChatInTab(
 			syncedTick,
 			layoutOpenOptionsForNavigation(store, workspaceId, navigation),
 		);
+		setLastChatSessionId(workspaceId, sessionId);
 		if (prompt) sendPrompt(sessionId, prompt);
 		else if (draft) store.setChatDraft(sessionId, draft);
 	} catch {
@@ -89,10 +91,12 @@ export async function openChatInTab(
 	);
 	if (tab) {
 		store.openTab(tab, "keep", true, options);
+		if (options.activate !== false) setLastChatSessionId(workspaceId, sessionId);
 		return;
 	}
 	if (store.sessions[sessionId]) {
 		store.reopenChat(workspaceId, sessionId, options);
+		if (options.activate !== false) setLastChatSessionId(workspaceId, sessionId);
 		return;
 	}
 	store.beginChatStart(workspaceId);
@@ -134,6 +138,8 @@ export async function openChatInTab(
 			!settled.deletedSessionsByWorkspace[workspaceId]?.[sessionId]
 		) {
 			toast.error(t("panels.openChat.restoreFailed"), t("panels.openChat.openFailed"));
+		} else if (installed && effectiveOptions.activate !== false) {
+			setLastChatSessionId(workspaceId, sessionId);
 		}
 	} catch (err) {
 		const current = useAppStore.getState();

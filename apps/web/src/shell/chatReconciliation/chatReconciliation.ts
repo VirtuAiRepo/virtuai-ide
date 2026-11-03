@@ -1,7 +1,9 @@
 import { t } from "@thinkrail/locales/react";
 import { useEffect, useRef } from "react";
 import { messagesToRuntime } from "../../chat/hydrate";
+import { getLastChatSessionId, preferLastChatSession } from "../../chat/lastChatPreference";
 import { type LayoutAttention, readLayoutSelection, tupleKey } from "../../lib";
+import { startChatInTab } from "../../panels/openChat";
 import {
 	type CenterNavigationStamp,
 	captureCenterNavigation,
@@ -27,7 +29,6 @@ import {
 	type WorkspaceLayoutDocument,
 } from "../layout";
 import { commitWorkspaceLayout } from "../layoutState";
-import { startChatInTab } from "../../panels/openChat";
 
 const sessionHydration = new Map<string, Promise<boolean>>();
 const AUTO_OPEN_CHAT_LIMIT = 4;
@@ -325,11 +326,31 @@ export function useWorkspaceChatCatalogReconciliation(
 					}
 				}
 				const autoOpenAlreadyAttempted = !claimAutoOpenAttempt(workspaceId, connectionGeneration);
+				const lastChatId = getLastChatSessionId(workspaceId);
 				const toOpen: typeof summaries = [];
 				const toHistory: typeof summaries = [];
-				for (const summary of [...summaries].sort((a, b) => b.updatedAt - a.updatedAt)) {
-					if (summary.sessionId === handledRouteSessionId || placed.has(summary.sessionId))
+				const ordered = preferLastChatSession(
+					[...summaries].sort((a, b) => b.updatedAt - a.updatedAt),
+					lastChatId,
+				);
+				// Last focused chat wins even when it is not live / has no open todos.
+				if (
+					handledRouteSessionId === null &&
+					!autoOpenAlreadyAttempted &&
+					lastChatId &&
+					!placed.has(lastChatId)
+				) {
+					const remembered = ordered.find((summary) => summary.sessionId === lastChatId);
+					if (remembered) toOpen.push(remembered);
+				}
+				for (const summary of ordered) {
+					if (
+						summary.sessionId === handledRouteSessionId ||
+						placed.has(summary.sessionId) ||
+						toOpen.some((open) => open.sessionId === summary.sessionId)
+					) {
 						continue;
+					}
 					if (
 						handledRouteSessionId === null &&
 						!autoOpenAlreadyAttempted &&
@@ -418,12 +439,7 @@ export function useWorkspaceChatCatalogReconciliation(
 					});
 				}
 				const history = [...toHistory, ...failedToOpen];
-				if (
-					live() &&
-					summaries.length === 0 &&
-					placed.size === 0 &&
-					!autoOpenAlreadyAttempted
-				) {
+				if (live() && summaries.length === 0 && placed.size === 0 && !autoOpenAlreadyAttempted) {
 					void startChatInTab(workspaceId);
 				}
 				if (!live() || history.length === 0) return;

@@ -51,6 +51,7 @@ import { ExtraUsageNotice } from "./ExtraUsageNotice";
 import { mentionLookup } from "./fileTargets";
 import { HistoryOverlay } from "./HistoryOverlay";
 import { messagesToRuntime } from "./hydrate";
+import { setLastChatSessionId } from "./lastChatPreference";
 import { parseModelRef, RunModelLabel } from "./ModelEffortLabel";
 import type { ModelSelection } from "./ModelEffortPicker";
 import {
@@ -98,6 +99,9 @@ export default function ChatView({
 	onOpenFile?: ((path: string) => void) | undefined;
 }) {
 	const t = useT();
+	useEffect(() => {
+		setLastChatSessionId(workspaceId, sessionId);
+	}, [workspaceId, sessionId]);
 	const sessionExists = useAppStore((s) => s.sessions[sessionId] !== undefined);
 	const isStreaming = useAppStore((s) => s.sessions[sessionId]?.isStreaming ?? false);
 	const draft = useAppStore((s) => s.sessions[sessionId]?.draft ?? "");
