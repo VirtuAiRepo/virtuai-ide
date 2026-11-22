@@ -47,6 +47,7 @@ export type DesktopRpc = {
 			openVirtuaiSkills: undefined;
 			openVirtuaiMcp: undefined;
 			openVirtuaiAgents: undefined;
+			switchVirtuaiShell: { mode: "chat" | "dev" };
 		};
 	};
 	webview: {

@@ -1,26 +1,28 @@
 import { expect, test } from "bun:test";
 import {
-	isVirtuaiSession,
-	readVirtuaiServer,
-	defaultVirtuaiServerForChannel,
-	isAllowedVirtuaiServer,
-	writeVirtuaiServerOverride,
-	readVirtuaiSavedAgentId,
-	writeVirtuaiSavedAgentId,
-	clearVirtuaiAccount,
-	virtuaiAdminUrl,
-	virtuaiAgentsUrl,
-	virtuaiAuthUrl,
-	virtuaiMcpUrl,
-	virtuaiSkillsUrl,
-	virtuaiOrigin,
 	applyVirtuaiAccount,
+	clearVirtuaiAccount,
+	defaultVirtuaiServerForChannel,
 	fetchVirtuaiAgents,
+	isAllowedVirtuaiServer,
+	isVirtuaiSession,
+	isVirtuaiShellMessage,
 	mintVirtuaiCliToken,
 	parseVirtuaiCredentials,
 	preferCompletionsAgents,
+	readVirtuaiSavedAgentId,
+	readVirtuaiServer,
+	virtuaiAdminUrl,
 	virtuaiAgentsFromPayload,
+	virtuaiAgentsUrl,
+	virtuaiAuthUrl,
+	virtuaiDesktopBridgeScript,
+	virtuaiMcpUrl,
+	virtuaiOrigin,
+	virtuaiSkillsUrl,
 	waitForVirtuaiLogin,
+	writeVirtuaiSavedAgentId,
+	writeVirtuaiServerOverride,
 } from "./virtuaiGate";
 
 test("a server url is an origin", () => {
@@ -262,4 +264,16 @@ test("built-in Browser and Agent Builder stay out of the switcher", () => {
 			],
 		}),
 	).toEqual([{ id: "agent-a", name: "Ada" }]);
+});
+
+test("shell host messages and the chat bridge script", () => {
+	expect(isVirtuaiShellMessage({ type: "virtuai-shell", mode: "dev" })).toEqual({ mode: "dev" });
+	expect(isVirtuaiShellMessage({ type: "virtuai-shell", mode: "chat" })).toEqual({
+		mode: "chat",
+	});
+	expect(isVirtuaiShellMessage({ type: "other" })).toBeNull();
+	const script = virtuaiDesktopBridgeScript({ version: "0.1.2", platform: "macos" });
+	expect(script).toContain("__VIRTUAI_DESKTOP__");
+	expect(script).toContain("switchToDev");
+	expect(script).toContain("0.1.2");
 });

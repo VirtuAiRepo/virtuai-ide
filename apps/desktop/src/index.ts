@@ -18,6 +18,8 @@ import {
 	QUIT_SHORTCUT_ACTION,
 	readMenuAction,
 	readMenuLabels,
+	SHOW_CHAT_ACTION,
+	SHOW_DEV_ACTION,
 } from "./applicationMenu";
 import { attributionClaimOnFirstReadiness } from "./attributionReadiness";
 import { desktopError, setDesktopErrorReporter } from "./errorReporting";
@@ -63,6 +65,7 @@ import {
 	defaultVirtuaiServerForChannel,
 	fetchCompletionsAgentIds,
 	fetchVirtuaiAgents,
+	isVirtuaiShellMessage,
 	mintVirtuaiCliToken,
 	parseVirtuaiCredentials,
 	preferCompletionsAgents,
@@ -74,12 +77,19 @@ import {
 	virtuaiAdminUrl,
 	virtuaiAgentsUrl,
 	virtuaiAuthUrl,
+	virtuaiDesktopBridgeScript,
 	virtuaiMcpUrl,
 	virtuaiSkillsUrl,
 	waitForVirtuaiLogin,
 	writeVirtuaiSavedAgentId,
 	writeVirtuaiServerOverride,
 } from "./virtuaiGate";
+import {
+	parseVirtuaiOpenUrl,
+	type VirtuaiOpenTarget,
+	type VirtuaiShellMode,
+	virtuaiChatUrl,
+} from "./virtuaiOpen";
 import {
 	desktopWindowChrome,
 	injectInitialWindowChrome,
@@ -274,11 +284,33 @@ async function start(): Promise<void> {
 		every,
 	});
 	const commandGate = createRepeatGate({ isKeyDown: () => readKeys()?.keyDown ?? null, every });
+	/** Chat ↔ Dev shell; implementations assigned once windows exist. */
+	const shell: {
+		mode: VirtuaiShellMode;
+		lastChatUrl: string | null;
+		showChat: (url?: string | null) => void;
+		showDev: () => void;
+		applyOpen: (target: VirtuaiOpenTarget) => void;
+	} = {
+		mode: "dev",
+		lastChatUrl: null,
+		showChat: () => {},
+		showDev: () => {},
+		applyOpen: () => {},
+	};
 	ApplicationMenu.on("application-menu-clicked", (event) => {
 		const action = readMenuAction(event);
 		const target = menuTarget;
 		if (action === "open-settings") {
 			openVirtuaiAdmin();
+			return;
+		}
+		if (action === SHOW_CHAT_ACTION) {
+			shell.showChat();
+			return;
+		}
+		if (action === SHOW_DEV_ACTION) {
+			shell.showDev();
 			return;
 		}
 		if (action === QUIT_SHORTCUT_ACTION) quitShortcut.press();
@@ -341,11 +373,26 @@ async function start(): Promise<void> {
 	let releaseSession = false;
 	let ideWindow: BrowserWindow | null = null;
 	let virtuaiAgents: VirtuaiAgentChoice[] = [];
+	let virtuaiWorkspaceSlug = "";
+	const desktopBridgeScript = virtuaiDesktopBridgeScript({
+		version,
+		platform:
+			process.platform === "darwin"
+				? "macos"
+				: process.platform === "win32"
+					? "windows"
+					: process.platform === "linux"
+						? "linux"
+						: process.platform,
+	});
 	const onWebview = (webviewId: number, listener: (detail: unknown) => void) => {
 		const name = `host-message-${webviewId}`;
 		const wrapped = (event: { data?: { detail?: unknown } }) => listener(event.data?.detail);
 		Electrobun.events.on(name, wrapped);
 		return () => Electrobun.events.off(name, wrapped);
+	};
+	const injectChatBridge = () => {
+		sessionWindow?.webview.executeJavascript(desktopBridgeScript);
 	};
 	const openVirtuaiPage = (url: string) => {
 		if (!sessionWindow) return;
@@ -378,11 +425,18 @@ async function start(): Promise<void> {
 					frame: { x: 120, y: 80, width: 1100, height: 760 },
 				});
 				sessionWindow = window;
+				window.webview.on("dom-ready", () => injectChatBridge());
+				onWebview(window.webview.id, (detail) => {
+					const shellMsg = isVirtuaiShellMessage(detail);
+					if (shellMsg?.mode === "dev") shell.showDev();
+					else if (shellMsg?.mode === "chat") shell.showChat();
+				});
 				window.on("will-close", (event) => {
 					if (!sessionHeld || releaseSession) return;
 					(event as { response?: { allow: boolean } }).response = { allow: false };
 					window.hide();
 					ideWindow?.activate();
+					shell.mode = "dev";
 				});
 				return window;
 			},
@@ -416,6 +470,7 @@ async function start(): Promise<void> {
 				},
 			);
 			if (credentials) {
+				virtuaiWorkspaceSlug = credentials.workspaceSlug?.trim() ?? "";
 				try {
 					virtuaiAgents = await fetchVirtuaiAgents(virtuaiServer, credentials);
 				} catch {
@@ -671,6 +726,10 @@ async function start(): Promise<void> {
 				openVirtuaiAgents: () => {
 					openVirtuaiAgents();
 				},
+				switchVirtuaiShell: ({ mode }) => {
+					if (mode === "chat") shell.showChat();
+					else shell.showDev();
+				},
 				menuLabelsChanged: ({ labels }) => {
 					const menuLabels = readMenuLabels(labels);
 					dialogLabels = readDialogLabels(labels);
@@ -733,6 +792,55 @@ async function start(): Promise<void> {
 	});
 	setWindowsWindowIcon(mainWindow);
 	ideWindow = mainWindow;
+	shell.showDev = () => {
+		shell.mode = "dev";
+		sessionWindow?.hide();
+		mainWindow.show();
+		mainWindow.activate();
+	};
+	shell.showChat = (url?: string | null) => {
+		shell.mode = "chat";
+		const agentId = process.env.VIRTUAI_AGENT_ID?.trim() ?? "";
+		const nextUrl =
+			url?.trim() ||
+			shell.lastChatUrl ||
+			(virtuaiServer && virtuaiWorkspaceSlug && agentId
+				? virtuaiChatUrl(virtuaiServer, virtuaiWorkspaceSlug, agentId)
+				: null);
+		if (nextUrl && sessionWindow) {
+			shell.lastChatUrl = nextUrl;
+			sessionWindow.webview.loadURL(nextUrl);
+		}
+		mainWindow.hide();
+		sessionWindow?.show();
+		sessionWindow?.activate();
+	};
+	shell.applyOpen = (target: VirtuaiOpenTarget) => {
+		shell.lastChatUrl = target.url;
+		if (target.agentId && virtuaiAgents.some((agent) => agent.id === target.agentId)) {
+			process.env.VIRTUAI_AGENT_ID = target.agentId;
+			writeVirtuaiSavedAgentId(
+				virtuaiConfigPath,
+				target.agentId,
+				readUserDataFile,
+				writeUserDataFile,
+			);
+		} else if (target.agentId) {
+			process.env.VIRTUAI_AGENT_ID = target.agentId;
+		}
+		if (target.workspaceSlug) virtuaiWorkspaceSlug = target.workspaceSlug;
+		if (target.mode === "chat") shell.showChat(target.url);
+		else {
+			// Dev binds Completions to the agent; Chat keeps the same conversation URL.
+			shell.showDev();
+		}
+	};
+	Electrobun.events.on("open-url", (event: { data?: { url?: string } }) => {
+		const raw = event.data?.url ?? "";
+		const target = parseVirtuaiOpenUrl(raw);
+		if (!target) return;
+		shell.applyOpen(target);
+	});
 	mainWindow.on("close", () => {
 		releaseSession = true;
 		sessionWindow?.close();

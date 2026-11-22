@@ -70,9 +70,7 @@ export function readVirtuaiServer(input: {
 						: undefined,
 			);
 			if (origin) return origin;
-		} catch {
-			continue;
-		}
+		} catch {}
 	}
 	const baked = input.channelDefault?.trim();
 	return baked ? virtuaiOrigin(baked) : null;
@@ -185,6 +183,47 @@ export function virtuaiAgentsUrl(origin: string): string {
 	return `${origin}/agents`;
 }
 
+/** Host-message type from the Chat webview Dev toggle (no preload RPC there). */
+export const VIRTUAI_SHELL_TYPE = "virtuai-shell";
+
+/**
+ * Injected into the console/chat BrowserWindow so web chat sees
+ * `window.__VIRTUAI_DESKTOP__` and can switch to ThinkRail Dev locally.
+ */
+export function virtuaiDesktopBridgeScript(input: { version: string; platform: string }): string {
+	return `(() => {
+	const send = window.__electrobunSendToHost;
+	const bridge = {
+		version: ${JSON.stringify(input.version)},
+		platform: ${JSON.stringify(input.platform)},
+		switchToDev: () => {
+			if (typeof send === "function") send({ type: ${JSON.stringify(VIRTUAI_SHELL_TYPE)}, mode: "dev" });
+		},
+		switchToChat: () => {
+			if (typeof send === "function") send({ type: ${JSON.stringify(VIRTUAI_SHELL_TYPE)}, mode: "chat" });
+		},
+	};
+	try {
+		Object.defineProperty(window, "__VIRTUAI_DESKTOP__", {
+			value: Object.freeze(bridge),
+			writable: false,
+			configurable: true,
+			enumerable: false,
+		});
+	} catch {
+		window.__VIRTUAI_DESKTOP__ = Object.freeze(bridge);
+	}
+})();`;
+}
+
+export function isVirtuaiShellMessage(detail: unknown): { mode: "chat" | "dev" } | null {
+	if (typeof detail !== "object" || detail === null) return null;
+	if (!("type" in detail) || detail.type !== VIRTUAI_SHELL_TYPE) return null;
+	const mode = "mode" in detail && typeof detail.mode === "string" ? detail.mode : "";
+	if (mode === "chat" || mode === "dev") return { mode };
+	return null;
+}
+
 export const VIRTUAI_CREDENTIALS_TYPE = "virtuai-credentials";
 
 export const VIRTUAI_CREDENTIALS_SCRIPT = `(() => {
@@ -217,7 +256,9 @@ export function parseVirtuaiCredentials(detail: unknown): VirtuaiCredentials | n
 	const workspaceId =
 		"workspaceId" in detail && typeof detail.workspaceId === "number" ? detail.workspaceId : null;
 	const workspaceSlug =
-		"workspaceSlug" in detail && typeof detail.workspaceSlug === "string" ? detail.workspaceSlug : "";
+		"workspaceSlug" in detail && typeof detail.workspaceSlug === "string"
+			? detail.workspaceSlug
+			: "";
 	if (!token || workspaceId === null) return null;
 	return { token, workspaceId, workspaceSlug };
 }
@@ -368,7 +409,7 @@ export const VIRTUAI_AUTH_WATCH = `(() => {
 		try {
 			if (!localStorage.getItem("auth-token")) return;
 			if (!localStorage.getItem("current-workspace")) return;
-			if (location.hash !== ${JSON.stringify("#" + SESSION_HASH)}) {
+			if (location.hash !== ${JSON.stringify(`#${SESSION_HASH}`)}) {
 				location.hash = ${JSON.stringify(SESSION_HASH)};
 			}
 			const send = window.__electrobunSendToHost;

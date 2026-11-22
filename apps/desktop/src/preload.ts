@@ -7,6 +7,7 @@ import type {
 	NativeWindowControlsBridge,
 	NativeWindowState,
 } from "@thinkrail/contracts";
+import { version as desktopVersion } from "@thinkrail/shared/version";
 import Electrobun, { Electroview } from "electrobun/view";
 import { installExternalLinkRouting } from "./externalNavigation";
 import { handlePageZoomShortcut, installPageZoomGestures } from "./pageZoom";
@@ -26,6 +27,14 @@ import {
 	NATIVE_WINDOW_CONTROLS_GLOBAL,
 	readWindowChromeFlag,
 } from "./windowChrome";
+
+function desktopPlatform(): string {
+	const ua = typeof navigator !== "undefined" ? navigator.platform : "";
+	if (/mac/i.test(ua)) return "macos";
+	if (/win/i.test(ua)) return "windows";
+	if (/linux/i.test(ua)) return "linux";
+	return ua || "unknown";
+}
 
 interface DesktopPreferenceAdapter {
 	getItem(key: string): string | null;
@@ -145,6 +154,8 @@ Object.defineProperty(globals, "__THINKRAIL_NATIVE_MENU__", {
 });
 Object.defineProperty(globals, "__VIRTUAI_DESKTOP__", {
 	value: Object.freeze({
+		version: desktopVersion,
+		platform: desktopPlatform(),
 		openSkills: () => {
 			electroview.rpc?.send.openVirtuaiSkills();
 		},
@@ -158,6 +169,14 @@ Object.defineProperty(globals, "__VIRTUAI_DESKTOP__", {
 		selectAgent: (agentId: string) => rpc.request.selectVirtuaiAgent({ agentId }),
 		getServer: () => rpc.request.getVirtuaiServer(),
 		setServer: (server: string) => rpc.request.setVirtuaiServer({ server }),
+		/** Leave ThinkRail Dev and show the workspace web chat. */
+		switchToChat: () => {
+			electroview.rpc?.send.switchVirtuaiShell({ mode: "chat" });
+		},
+		/** Already on Dev; no-op so the page never reopens via virtuai://. */
+		switchToDev: () => {
+			electroview.rpc?.send.switchVirtuaiShell({ mode: "dev" });
+		},
 	}),
 	writable: false,
 	configurable: false,

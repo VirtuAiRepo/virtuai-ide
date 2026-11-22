@@ -49,3 +49,10 @@ Default channels: packaging `dev`/`canary` → `https://dev.imvirtuai.com`;
 `stable` → `https://app.imvirtuai.com`.
 
 Multichannel connector (Slack, etc.) is the CLI: `virtuai run`, not this app.
+
+## Chat / Dev bridge
+
+Registers `virtuai://` (macOS). The web chat Dev toggle opens
+`virtuai://open?mode=dev&url=<workspace chat url>` (optional `c=` session).
+View → Chat | Dev switches between the embedded web chat and ThinkRail without
+re-opening the app. See VirtuAI monorepo `docs/workitems/ide-chat-dev-bridge.md`.

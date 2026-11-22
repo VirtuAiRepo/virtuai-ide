@@ -17,6 +17,8 @@ export const DEFAULT_MENU_LABELS: DesktopMenuLabels = readMenuLabels({});
 export const QUIT_SHORTCUT_ACTION = "quit-shortcut";
 const CLOSE_ITEM_COMMAND: NativeCommand = "close-item";
 const OPEN_SETTINGS_COMMAND: NativeCommand = "open-settings";
+export const SHOW_CHAT_ACTION = "virtuai-show-chat";
+export const SHOW_DEV_ACTION = "virtuai-show-dev";
 const NATIVE_COMMANDS = { "close-item": true, "open-settings": true } satisfies Record<
 	NativeCommand,
 	true
@@ -72,6 +74,21 @@ export function desktopApplicationMenu(
 			],
 		},
 		editMenu(labels),
+		{
+			label: labels["desktop.menu.view"],
+			submenu: [
+				{
+					label: labels["desktop.menu.chat"],
+					action: SHOW_CHAT_ACTION,
+					accelerator: "CommandOrControl+1",
+				},
+				{
+					label: labels["desktop.menu.dev"],
+					action: SHOW_DEV_ACTION,
+					accelerator: "CommandOrControl+2",
+				},
+			],
+		},
 		{
 			label: labels["desktop.menu.window"],
 			submenu: [

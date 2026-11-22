@@ -7,6 +7,8 @@ import {
 	QUIT_SHORTCUT_ACTION,
 	readMenuAction,
 	readMenuLabels,
+	SHOW_CHAT_ACTION,
+	SHOW_DEV_ACTION,
 } from "./applicationMenu";
 
 const editMenu: ApplicationMenuItemConfig = {
@@ -24,7 +26,7 @@ const editMenu: ApplicationMenuItemConfig = {
 	],
 };
 
-test("builds the native macOS application, edit, and window menus", () => {
+test("builds the native macOS application, edit, view, and window menus", () => {
 	expect(desktopApplicationMenu("darwin")).toEqual([
 		{
 			submenu: [
@@ -44,6 +46,13 @@ test("builds the native macOS application, edit, and window menus", () => {
 			],
 		},
 		editMenu,
+		{
+			label: "View",
+			submenu: [
+				{ label: "Chat", action: SHOW_CHAT_ACTION, accelerator: "CommandOrControl+1" },
+				{ label: "Dev", action: SHOW_DEV_ACTION, accelerator: "CommandOrControl+2" },
+			],
+		},
 		{
 			label: "Window",
 			submenu: [
@@ -110,6 +119,9 @@ test("translated labels rename the custom items and fall back to English per lab
 		"desktop.menu.quit": "Quit VirtuAI",
 		"desktop.menu.window": "Window",
 		"desktop.menu.close": "Close",
+		"desktop.menu.view": "View",
+		"desktop.menu.chat": "Chat",
+		"desktop.menu.dev": "Dev",
 	});
 	const menu = desktopApplicationMenu("darwin", labels);
 	expect(menu?.[1]).toMatchObject({ label: "Bearbeiten" });

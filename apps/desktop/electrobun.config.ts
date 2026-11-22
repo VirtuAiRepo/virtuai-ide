@@ -10,6 +10,8 @@ export default {
 		name: "VirtuAI",
 		identifier: "com.virtuai.ide",
 		version,
+		/** Browser Dev toggle → `virtuai://open?…` (macOS; see open-url handler). */
+		urlSchemes: ["virtuai"],
 	},
 	runtime: {
 		exitOnLastWindowClosed: true,
