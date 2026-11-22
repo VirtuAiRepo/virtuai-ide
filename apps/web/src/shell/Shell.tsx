@@ -8,6 +8,7 @@ import type { MessageKey } from "@thinkrail/locales";
 import { useT } from "@thinkrail/locales/react";
 import { IconButton } from "@thinkrail/ui/button";
 import { useEffect, useState } from "react";
+import { VirtuaiShellModeToggle } from "../desktop/VirtuaiShellModeToggle";
 import {
 	applyFontPreference,
 	DEFAULT_FONT_PREFERENCE,
@@ -192,6 +193,7 @@ export function Shell() {
 					data-testid="topbar-actions"
 					className="window-no-drag ml-auto flex shrink-0 items-center gap-12"
 				>
+					<VirtuaiShellModeToggle mode="dev" />
 					{updates ? (
 						<UpdateReadyButton
 							updates={updates}
