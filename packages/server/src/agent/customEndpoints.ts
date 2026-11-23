@@ -9,7 +9,7 @@ import {
 	type CustomEndpointProbeRequest,
 	isCustomEndpointId,
 } from "@thinkrail/contracts";
-import { applyEdits, getNodeValue, modify, type Node } from "jsonc-parser";
+import { applyEdits, getNodeValue, modify, type Node } from "jsonc-parser/lib/esm/main.js";
 import { logger } from "../log";
 import { usePiRuntime } from "./agentSessionManager";
 import {

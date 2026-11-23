@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { NativeCommand, NativeQuitHint, NativeWindowState } from "@thinkrail/contracts";
+import { onVirtuaiRunnerWorkdir } from "@thinkrail/server/agent/virtuai-runner-bridge";
 import { resolveShellEnv } from "@thinkrail/shared/shellEnv";
 import { channel, posthogProjectKey, version } from "@thinkrail/shared/version";
 import Electrobun, {
@@ -588,9 +589,7 @@ async function start(): Promise<void> {
 		quitCoordinator.handleBeforeQuit(event);
 	});
 	// Keep `virtuai run --desktop` pointed at the active worktree (browser + guard).
-	void import("@thinkrail/server/agent").then((agentApi) => {
-		agentApi.onVirtuaiRunnerWorkdir((workdir: string) => startVirtuaiRunner(workdir));
-	});
+	onVirtuaiRunnerWorkdir((workdir: string) => startVirtuaiRunner(workdir));
 	// Warm the runner from the last IDE worktree once login minted a CLI token.
 	if (process.env.VIRTUAI_CLI_TOKEN?.trim() && virtuaiServer) {
 		try {

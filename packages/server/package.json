@@ -6,6 +6,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./agent": "./src/agent/index.ts",
+		"./agent/virtuai-runner-bridge": "./src/agent/virtuaiRunnerBridge.ts",
 		"./build-support": "./src/buildSupport.ts",
 		"./history-test-fixtures": "./src/history/testFixtures.ts"
 	},

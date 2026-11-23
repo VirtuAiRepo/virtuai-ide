@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { type Node, type ParseError, parseTree } from "jsonc-parser";
+import { type Node, type ParseError, parseTree } from "jsonc-parser/lib/esm/main.js";
 
 export const MODELS_JSON_PARSE = { allowTrailingComma: true };
 export const MODELS_JSON_FORMATTING = {

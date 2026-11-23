@@ -5,7 +5,7 @@ import {
 	type ModelContextSetting,
 	type ModelContextTarget,
 } from "@thinkrail/contracts";
-import { applyEdits, findNodeAtLocation, modify, type Node, parseTree } from "jsonc-parser";
+import { applyEdits, findNodeAtLocation, modify, type Node, parseTree } from "jsonc-parser/lib/esm/main.js";
 import { usePiRuntime } from "./agentSessionManager";
 import {
 	MODELS_JSON_FORMATTING,
