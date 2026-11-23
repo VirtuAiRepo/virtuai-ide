@@ -90,6 +90,7 @@ import {
 	type VirtuaiShellMode,
 	virtuaiChatUrl,
 } from "./virtuaiOpen";
+import { VirtuaiRunner } from "./virtuaiRunner";
 import {
 	desktopWindowChrome,
 	injectInitialWindowChrome,
@@ -374,6 +375,48 @@ async function start(): Promise<void> {
 	let ideWindow: BrowserWindow | null = null;
 	let virtuaiAgents: VirtuaiAgentChoice[] = [];
 	let virtuaiWorkspaceSlug = "";
+	const virtuaiRunner = new VirtuaiRunner({
+		onEvent: (event) => {
+			if (event.type === "state" || (event.type === "status" && event.state)) {
+				console.error(
+					`[desktop] virtuai run: ${event.type === "state" ? event.state : event.state}`,
+				);
+			}
+		},
+		onApproval: async (event) => {
+			const detail = [event.reason, event.workdir].filter(Boolean).join("\n");
+			try {
+				const result = await Utils.showMessageBox({
+					type: "question",
+					title: "Allow command?",
+					message: event.command,
+					detail: detail || "The VirtuAI runner needs permission to run this command.",
+					buttons: ["Allow once", "Deny"],
+					defaultId: 1,
+					cancelId: 1,
+				});
+				const index =
+					typeof result === "number"
+						? result
+						: typeof result === "object" &&
+								result &&
+								"response" in result &&
+								typeof (result as { response: unknown }).response === "number"
+							? (result as { response: number }).response
+							: 1;
+				return { approved: index === 0, scope: "once" };
+			} catch (error) {
+				console.error("[desktop] runner approval dialog failed", error);
+				return { approved: false };
+			}
+		},
+	});
+	const startVirtuaiRunner = (workdir: string) => {
+		const server = process.env.VIRTUAI_SERVER?.trim();
+		const cliToken = process.env.VIRTUAI_CLI_TOKEN?.trim() ?? "";
+		if (!server || !workdir.trim()) return;
+		virtuaiRunner.start(server, workdir.trim(), cliToken || null);
+	};
 	const desktopBridgeScript = virtuaiDesktopBridgeScript({
 		version,
 		platform:
@@ -534,13 +577,38 @@ async function start(): Promise<void> {
 	});
 	setDesktopErrorReporter(host.reportError);
 	const quitCoordinator = createElectrobunQuitCoordinator(
-		() => host.server.shutdown(),
+		async () => {
+			virtuaiRunner.stop();
+			await host.server.shutdown();
+		},
 		() => dialogLabels,
 	);
 	startupQuitCoordinator = quitCoordinator;
 	Electrobun.events.on("before-quit", (event: BeforeQuitEvent) => {
 		quitCoordinator.handleBeforeQuit(event);
 	});
+	// Keep `virtuai run --desktop` pointed at the active worktree (browser + guard).
+	void import("@thinkrail/server/agent").then((agentApi) => {
+		agentApi.onVirtuaiRunnerWorkdir((workdir: string) => startVirtuaiRunner(workdir));
+	});
+	// Warm the runner from the last IDE worktree once login minted a CLI token.
+	if (process.env.VIRTUAI_CLI_TOKEN?.trim() && virtuaiServer) {
+		try {
+			const ideWorkspaces = join(homedir(), ".virtuai/ide/workspaces.json");
+			if (existsSync(ideWorkspaces)) {
+				const listed = JSON.parse(readFileSync(ideWorkspaces, "utf8")) as Array<{
+					worktreePath?: string;
+					lastActiveAt?: number;
+				}>;
+				const newest = [...listed].sort(
+					(a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0),
+				)[0];
+				if (newest?.worktreePath) startVirtuaiRunner(newest.worktreePath);
+			}
+		} catch (error) {
+			console.error("[desktop] could not warm virtuai run from last worktree", error);
+		}
+	}
 	const origin = `http://127.0.0.1:${host.port}`;
 	const routes = new RouteStore(join(userData, "routes.json"));
 	const preferences = new PreferenceStore(join(userData, "preferences.json"));

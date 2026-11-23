@@ -2345,7 +2345,11 @@ async function promptOnVirtuai(sessionId: string, text: string): Promise<boolean
 	} catch {
 		workdir = null;
 	}
-	if (workdir) ensureVirtuaiSkillsSync(workdir);
+	if (workdir) {
+		ensureVirtuaiSkillsSync(workdir);
+		const { notifyVirtuaiRunnerWorkdir } = await import("./virtuaiRunnerBridge");
+		notifyVirtuaiRunnerWorkdir(workdir);
+	}
 	// No Electrobun approval card yet: allow bash under the jailed workdir cwd.
 	// File deletes use the dedicated delete tool (path-jailed), not rm via shell.
 	await runVirtuaiTurn(sessionId, text, (event) => publish({ sessionId, event }), {

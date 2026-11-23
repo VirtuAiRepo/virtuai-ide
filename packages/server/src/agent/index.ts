@@ -137,4 +137,5 @@ export {
 	clearVirtuaiConversationBindings,
 	virtuaiConversationFor,
 } from "./virtuaiHistory";
+export { notifyVirtuaiRunnerWorkdir, onVirtuaiRunnerWorkdir } from "./virtuaiRunnerBridge";
 export * from "./webUiContext";

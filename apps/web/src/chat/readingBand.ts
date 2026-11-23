@@ -210,8 +210,23 @@ export function createReadingBandController(
 			lastScrollWrite.achieved === bounds.scrollTop &&
 			lastScrollWrite.maxScrollTop === bounds.maxScrollTop);
 
-	const writeRunwayHeight = (height: number) => {
-		const pixels = Math.max(0, Math.round(height));
+	/**
+	 * Turn-anchor / on-screen-guard room: enough for a short transcript without filling
+	 * most of the viewport with blank runway (the flaky "big white space" while processing).
+	 * Follow-derived room is already ~the Settle band; fold reserveRoom stays uncapped.
+	 */
+	const guardRunwayCap = () => {
+		const viewportHeight = environment.readViewportHeight();
+		if (viewportHeight <= 0) return Number.POSITIVE_INFINITY;
+		const settleBand = viewportHeight * ((100 - movement.settle) / 100);
+		return Math.round(Math.max(settleBand, viewportHeight * 0.35));
+	};
+
+	type RunwayWriteMode = "default" | "guard" | "fold";
+
+	const writeRunwayHeight = (height: number, mode: RunwayWriteMode = "default") => {
+		let pixels = Math.max(0, Math.round(height));
+		if (mode === "guard") pixels = Math.min(pixels, guardRunwayCap());
 		if (Math.abs(runwayHeight - pixels) <= GEOMETRY_EPSILON) return;
 		runwayHeight = pixels;
 		environment.writeRunwayHeight(pixels);
@@ -567,7 +582,8 @@ export function createReadingBandController(
 		const current = geometry ?? environment.readGeometry();
 		if (!current) return;
 		const keep = Math.max(0, current.scrollTop - naturalMaxScrollTop(current));
-		if (keep < runwayHeight - GEOMETRY_EPSILON) writeRunwayHeight(keep);
+		// Shrink only — use fold mode so a prior reserveRoom is not re-capped.
+		if (keep < runwayHeight - GEOMETRY_EPSILON) writeRunwayHeight(keep, "fold");
 		publishRunway();
 	};
 
@@ -837,7 +853,8 @@ export function createReadingBandController(
 		isNativeInputPending: () => nativeInputPending,
 		reserveRoom: (height) => {
 			if (!(height > GEOMETRY_EPSILON)) return;
-			writeRunwayHeight(runwayHeight + height);
+			// Fold/disclosure room is temporary and trimmed after layout; do not cap it.
+			writeRunwayHeight(runwayHeight + height, "fold");
 			publishRunway();
 		},
 		restoreScrollTop: (desired) => {
@@ -845,7 +862,7 @@ export function createReadingBandController(
 			if (!geometry) return;
 			const naturalMax = geometry.maxScrollTop - runwayHeight;
 			const neededRoom = Math.max(runwayHeight, Math.max(0, desired) - naturalMax);
-			if (neededRoom > runwayHeight + GEOMETRY_EPSILON) writeRunwayHeight(neededRoom);
+			if (neededRoom > runwayHeight + GEOMETRY_EPSILON) writeRunwayHeight(neededRoom, "guard");
 			publishRunway();
 			const bounds = environment.readScrollBounds();
 			if (bounds) writeScrollTop(Math.min(bounds.maxScrollTop, Math.max(0, desired)));

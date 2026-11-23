@@ -1891,6 +1891,15 @@ describe("reading-band on-screen restoration", () => {
 		expect(harness.readGeometry()).toMatchObject({ scrollTop: 1_100, maxScrollTop: 1_100 });
 	});
 
+	it("caps guard room so a short turn cannot open a near-empty viewport", () => {
+		const harness = createHarness({ viewportHeight: 600 });
+		// Natural max is 1000; asking for 1600 would want 600 px of runway (full viewport).
+		harness.controller.restoreScrollTop(1_600);
+		expect(harness.runwayHeights).toEqual([210]); // max(Settle band 150, 35% of 600)
+		expect(harness.readGeometry().maxScrollTop).toBe(1_210);
+		expect(harness.writes.at(-1)).toBe(1_210);
+	});
+
 	it("never shrinks existing room", () => {
 		const harness = createHarness();
 		harness.controller.restoreScrollTop(1_100);
