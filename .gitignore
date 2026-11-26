@@ -37,6 +37,9 @@ apps/desktop/artifacts/
 .env
 .env.local
 .env.*.local
+# Apple signing material kept on disk for local notarization. Never commit.
+AuthKey_*.p8
+developerID_application.cer
 test-results-binary/
 playwright-report-binary/
 test-results-desktop/

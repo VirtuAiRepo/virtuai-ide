@@ -33,13 +33,22 @@ bun run desktop:build        # package:dev → apps/desktop/build/dev-macos-arm6
 bun run desktop:package:stable
 ```
 
-Release CI (`.github/workflows/release-desktop.yml`) builds, signs, and
-notarizes on tag `v*`. **Required before Gatekeeper-clean beta:** copy Apple
-signing secrets from `virtuaiDesktop` into this repo’s Actions secrets
-(`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY_P8`,
-`APPLE_API_KEY`, `APPLE_API_ISSUER`), then tag `v*` or run **Release desktop**.
+Release CI (`.github/workflows/release-desktop.yml`) builds on tag `v*`
+and publishes three installers on the same GitHub Release:
 
-Updater feed (verified):  
+- macOS arm64 DMG (signed and notarized when the Apple secrets below are set)
+- Linux x64 setup tarball (`VirtuAI-<version>-linux-x64.tar.gz`)
+- Windows x64 setup zip (`VirtuAI-<version>-windows-x64.zip`)
+
+**Required before a Gatekeeper-clean Mac build:** copy Apple signing secrets
+from `virtuaiDesktop` into this repo’s Actions secrets
+(`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY_P8`,
+`APPLE_API_KEY`, `APPLE_API_ISSUER`). `APPLE_CERTIFICATE` is the base64
+`.p12` of **Developer ID Application** (certificate plus private key). The
+`.cer` and the App Store Connect `.p8` do not codesign by themselves.
+Without the `.p12` the workflow still publishes an unsigned DMG.
+
+Updater feed (one manifest per os/arch):  
 `https://github.com/VirtuAiRepo/virtuai-ide/releases/download/desktop-updates/stable-macos-arm64-update.json`
 
 ## Server

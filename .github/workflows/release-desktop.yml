@@ -1,14 +1,16 @@
-# Builds VirtuAI IDE (Electrobun) for macOS arm64 and publishes a GitHub
-# Release DMG + Electrobun updater feed. Trigger (same shape as virtuaiDesktop):
+# Builds VirtuAI IDE (Electrobun) for macOS arm64, Linux x64, and Windows x64,
+# then publishes one GitHub Release plus the Electrobun updater feed.
+# Trigger (same shape as virtuaiDesktop):
 #
-#   git tag v0.1.2 && git push origin v0.1.2
-#   Actions → Release desktop → Run workflow (version 0.1.2)
+#   git tag v0.1.6 && git push virtuai-ide v0.1.6
+#   Actions → Release desktop → Run workflow (version 0.1.6)
 #
 # Signing / notarization is optional for dogfood: Gatekeeper will warn on
 # first open until Apple secrets are copied from VirtuAiRepo/virtuaiDesktop
 # (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_P8,
-# APPLE_API_KEY, APPLE_API_ISSUER). Notarization is not the Mac App Store —
-# it is Developer ID distribution so macOS trusts a direct DMG download.
+# APPLE_API_KEY, APPLE_API_ISSUER). APPLE_CERTIFICATE is the Developer ID
+# Application .p12 (public cert + private key). Notarization is not the Mac
+# App Store — it is Developer ID distribution so macOS trusts a direct DMG.
 name: Release desktop
 
 on:
@@ -148,34 +150,172 @@ jobs:
           cp "$dmg" "VirtuAI-${version}-macos-arm64.dmg"
           echo "DMG=VirtuAI-${version}-macos-arm64.dmg" >> "$GITHUB_ENV"
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG }}
-          name: VirtuAI IDE ${{ env.TAG }}
-          files: ${{ env.DMG }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          prerelease: true
+      - name: Collect macOS release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          manifest="$(find apps/desktop/artifacts -name 'stable-macos-arm64-update.json' | head -1)"
+          archive="$(find apps/desktop/artifacts -name 'stable-macos-arm64-VirtuAI.app.tar.zst' | head -1)"
+          if [ -z "$manifest" ] || [ -z "$archive" ] || [ ! -f "$DMG" ]; then
+            echo "stable macOS artifacts missing" >&2
+            find apps/desktop/artifacts -maxdepth 2 -type f -print >&2 || true
+            exit 1
+          fi
+          cp "$DMG" "release-assets/$(basename "$DMG")"
+          cp "$manifest" "release-assets/$(basename "$manifest")"
+          cp "$archive" "release-assets/$(basename "$archive")"
 
-      # Electrobun Updater reads {baseUrl}/{channel}-{os}-{arch}-update.json
-      # (release.baseUrl → …/releases/download/desktop-updates).
-      - name: Publish updater feed (desktop-updates)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: release-assets/*
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Stamp version and channel
+        run: |
+          version="${TAG#v}"
+          cat > packages/shared/src/version.ts <<EOF
+          export const version = "${version}";
+          export const channel = "stable";
+          export const commit = "${{ github.sha }}";
+          export const posthogProjectKey = "";
+          EOF
+
+      - name: Install desktop runtime packages
+        uses: ./.github/actions/desktop-apt
+
+      - name: Install and package stable
+        run: |
+          bun install --frozen-lockfile
+          bun run desktop:package:stable
+
+      - name: Collect Linux release assets
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p release-assets
+          installer="apps/desktop/artifacts/linux-x64-VirtuAI-Setup.tar.gz"
+          manifest="apps/desktop/artifacts/stable-linux-x64-update.json"
+          archive="$(find apps/desktop/artifacts -maxdepth 1 -type f -name 'stable-linux-x64-*.tar.zst' | head -1)"
+          if [ ! -f "$installer" ] || [ ! -f "$manifest" ] || [ -z "$archive" ]; then
+            echo "stable Linux artifacts missing" >&2
+            find apps/desktop/artifacts -maxdepth 2 -type f -print >&2 || true
+            exit 1
+          fi
+          cp "$installer" "release-assets/VirtuAI-${version}-linux-x64.tar.gz"
+          cp "$manifest" "release-assets/$(basename "$manifest")"
+          cp "$archive" "release-assets/$(basename "$archive")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: release-assets/*
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Stamp version and channel
+        shell: bash
+        run: |
+          version="${TAG#v}"
+          cat > packages/shared/src/version.ts <<EOF
+          export const version = "${version}";
+          export const channel = "stable";
+          export const commit = "${{ github.sha }}";
+          export const posthogProjectKey = "";
+          EOF
+
+      - name: Install and package stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          # Git's tar precedes Windows tar and breaks Electrobun's zstd archives.
+          system32="$(cygpath -u "$SYSTEMROOT")/System32"
+          export PATH="$system32:$PATH"
+          bun run desktop:package:stable
+
+      - name: Collect Windows release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p release-assets
+          installer="apps/desktop/artifacts/win-x64-VirtuAI-Setup.zip"
+          manifest="apps/desktop/artifacts/stable-win-x64-update.json"
+          archive="$(find apps/desktop/artifacts -maxdepth 1 -type f -name 'stable-win-x64-*.tar.zst' | head -1)"
+          if [ ! -f "$installer" ] || [ ! -f "$manifest" ] || [ -z "$archive" ]; then
+            echo "stable Windows artifacts missing" >&2
+            find apps/desktop/artifacts -maxdepth 2 -type f -print >&2 || true
+            exit 1
+          fi
+          cp "$installer" "release-assets/VirtuAI-${version}-windows-x64.zip"
+          cp "$manifest" "release-assets/$(basename "$manifest")"
+          cp "$archive" "release-assets/$(basename "$archive")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish GitHub Release and updater feed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          manifest="$(find apps/desktop/artifacts -name 'stable-macos-arm64-update.json' | head -1)"
-          archive="$(find apps/desktop/artifacts -name 'stable-macos-arm64-VirtuAI.app.tar.zst' | head -1)"
-          if [ -z "$manifest" ] || [ -z "$archive" ]; then
-            echo "stable update artifacts missing under apps/desktop/artifacts" >&2
-            ls -la apps/desktop/artifacts >&2 || true
+          shopt -s nullglob
+          echo "release assets:"
+          ls -la release-assets
+          installers=(release-assets/VirtuAI-*)
+          updates=(release-assets/stable-*)
+          if [ "${#installers[@]}" -ne 3 ] || [ "${#updates[@]}" -lt 6 ]; then
+            echo "expected 3 installers and 6 updater files" >&2
             exit 1
           fi
-          if gh release view desktop-updates >/dev/null 2>&1; then
-            gh release upload desktop-updates "$manifest" "$archive" --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${installers[@]}" --clobber
           else
-            gh release create desktop-updates "$manifest" "$archive" \
+            gh release create "$TAG" "${installers[@]}" \
+              --title "VirtuAI IDE ${TAG}" \
+              --generate-notes \
+              --prerelease
+          fi
+          # Electrobun Updater reads {baseUrl}/{channel}-{os}-{arch}-update.json
+          # (release.baseUrl → …/releases/download/desktop-updates).
+          if gh release view desktop-updates >/dev/null 2>&1; then
+            gh release upload desktop-updates "${updates[@]}" --clobber
+          else
+            gh release create desktop-updates "${updates[@]}" \
               --title "Electrobun update feed" \
-              --notes "Stable/canary updater manifests and archives for VirtuAI IDE. Not a user-facing installer — use the v* release DMGs."
+              --notes "Stable updater manifests and archives for VirtuAI IDE. Not a user-facing installer — use the v* release assets."
           fi
